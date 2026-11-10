@@ -1,4 +1,6 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 
@@ -15,95 +17,71 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _displayNameController;
   late final TextEditingController _bioController;
-  late final TextEditingController _avatarUrlController;
 
+  final ImagePicker _picker = ImagePicker();
+  Uint8List? _newImageBytes;
+  String? _newImageFilename;
+  bool _removeAvatar = false;
   bool _isLoading = false;
-  String? _selectedAvatarUrl;
-
-  static const List<String> _avatarPresets = [
-    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=400&q=80',
-    'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
-  ];
 
   @override
   void initState() {
     super.initState();
     _displayNameController = TextEditingController(text: widget.profile.displayName);
     _bioController = TextEditingController(text: widget.profile.bio ?? '');
-    _avatarUrlController = TextEditingController(text: widget.profile.avatarUrl ?? '');
-    _selectedAvatarUrl = widget.profile.avatarUrl;
-
-    _avatarUrlController.addListener(() {
-      final text = _avatarUrlController.text.trim();
-      if (text != _selectedAvatarUrl) {
-        setState(() {
-          _selectedAvatarUrl = text.isNotEmpty ? text : null;
-        });
-      }
-    });
   }
 
   @override
   void dispose() {
     _displayNameController.dispose();
     _bioController.dispose();
-    _avatarUrlController.dispose();
     super.dispose();
   }
 
-  Future<void> _handleSave() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    final newDisplayName = _displayNameController.text.trim();
-    final newBio = _bioController.text.trim();
-    final newAvatar = _selectedAvatarUrl?.trim();
-
-    setState(() => _isLoading = true);
-
-    final response = await AuthService().updateProfile(
-      displayName: newDisplayName,
-      bio: newBio.isNotEmpty ? newBio : null,
-      avatarUrl: newAvatar != null && newAvatar.isNotEmpty ? newAvatar : null,
-    );
-
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-
-    if (response.success && response.profile != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Perfil actualizado con éxito'),
-          behavior: SnackBarBehavior.floating,
-        ),
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final XFile? file = await _picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1024,
+        maxHeight: 1024,
       );
-      Navigator.of(context).pop(response.profile);
-    } else {
+
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        setState(() {
+          _newImageBytes = bytes;
+          _newImageFilename = file.name;
+          _removeAvatar = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(response.error ?? 'Error al actualizar perfil'),
+          content: Text('Error al seleccionar imagen: $e'),
           backgroundColor: Theme.of(context).colorScheme.error,
-          behavior: SnackBarBehavior.floating,
         ),
       );
     }
   }
 
-  void _showAvatarPickerSheet() {
+  void _showImageSourcePicker() {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: colorScheme.surface,
-      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
+        final hasActiveAvatar = (_newImageBytes != null ||
+            (widget.profile.avatarUrl != null &&
+                widget.profile.avatarUrl!.isNotEmpty &&
+                !_removeAvatar));
+
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
@@ -128,98 +106,78 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Elegí una imagen prediseñada o ingresá la URL de tu foto.',
+                  'Elegí una foto de tu dispositivo para subirla a tu perfil.',
                   style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 20),
 
-                // Avatar Presets Grid
-                Text(
-                  'Avatares destacados',
-                  style: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 72,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _avatarPresets.length,
-                    separatorBuilder: (context, index) => const SizedBox(width: 14),
-                    itemBuilder: (context, index) {
-                      final url = _avatarPresets[index];
-                      final isSelected = _selectedAvatarUrl == url;
-
-                      return GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _selectedAvatarUrl = url;
-                            _avatarUrlController.text = url;
-                          });
-                          Navigator.pop(ctx);
-                        },
-                        child: Container(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: isSelected ? colorScheme.primary : Colors.transparent,
-                              width: 3,
-                            ),
-                          ),
-                          child: CircleAvatar(
-                            radius: 30,
-                            backgroundImage: NetworkImage(url),
-                            onBackgroundImageError: (exception, stackTrace) {},
-                          ),
-                        ),
-                      );
-                    },
+                // Option: Gallery
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.photo_library_rounded, color: colorScheme.onPrimaryContainer),
                   ),
+                  title: const Text('Elegir de la galería', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Seleccionar una foto guardada en tu teléfono'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickImage(ImageSource.gallery);
+                  },
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 8),
 
-                // Action to clear avatar
-                if (_selectedAvatarUrl != null) ...[
+                // Option: Camera
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.camera_alt_rounded, color: colorScheme.onPrimaryContainer),
+                  ),
+                  title: const Text('Tomar foto', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Abrir la cámara para sacar una nueva foto'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickImage(ImageSource.camera);
+                  },
+                ),
+
+                // Option: Remove current photo
+                if (hasActiveAvatar) ...[
+                  const SizedBox(height: 8),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: Container(
-                      padding: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
                         color: colorScheme.errorContainer,
                         shape: BoxShape.circle,
                       ),
                       child: Icon(Icons.delete_outline_rounded, color: colorScheme.error),
                     ),
-                    title: const Text('Quitar foto de perfil'),
-                    subtitle: const Text('Volver a la inicial predeterminada'),
+                    title: Text(
+                      'Eliminar foto de perfil',
+                      style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.error),
+                    ),
+                    subtitle: const Text('Restablecer a las iniciales de tu cuenta'),
                     onTap: () {
                       setState(() {
-                        _selectedAvatarUrl = null;
-                        _avatarUrlController.clear();
+                        _newImageBytes = null;
+                        _newImageFilename = null;
+                        _removeAvatar = true;
                       });
                       Navigator.pop(ctx);
                     },
                   ),
-                  const SizedBox(height: 8),
                 ],
-
-                // Action to enter custom URL
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(Icons.link_rounded, color: colorScheme.onPrimaryContainer),
-                  ),
-                  title: const Text('Ingresar URL personalizada'),
-                  subtitle: const Text('Pegá el enlace directo a tu imagen (JPG, PNG)'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    // Scroll to URL field or focus it
-                  },
-                ),
               ],
             ),
           ),
@@ -228,12 +186,99 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
+  Future<void> _handleSave() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final newDisplayName = _displayNameController.text.trim();
+    final newBio = _bioController.text.trim();
+
+    setState(() => _isLoading = true);
+
+    try {
+      String? finalAvatarUrl = widget.profile.avatarUrl;
+
+      // 1. Upload new image from device if selected
+      if (_newImageBytes != null) {
+        final uploadResponse = await AuthService().uploadAvatar(
+          _newImageBytes!,
+          filename: _newImageFilename ?? 'avatar.jpg',
+        );
+
+        if (!uploadResponse.success) {
+          if (!mounted) return;
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(uploadResponse.error ?? 'Error al subir la imagen al servidor'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+          return;
+        }
+
+        finalAvatarUrl = uploadResponse.profile?.avatarUrl;
+      } else if (_removeAvatar) {
+        finalAvatarUrl = null;
+      }
+
+      // 2. Update display name and bio
+      final updateResponse = await AuthService().updateProfile(
+        displayName: newDisplayName,
+        bio: newBio.isNotEmpty ? newBio : null,
+        avatarUrl: _removeAvatar ? '' : finalAvatarUrl,
+      );
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      if (updateResponse.success && updateResponse.profile != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Perfil actualizado con éxito'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        Navigator.of(context).pop(updateResponse.profile);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(updateResponse.error ?? 'Error al actualizar el perfil'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al guardar cambios: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
+  ImageProvider? _getAvatarImageProvider() {
+    if (_removeAvatar) return null;
+    if (_newImageBytes != null) {
+      return MemoryImage(_newImageBytes!);
+    }
+    if (widget.profile.avatarUrl != null && widget.profile.avatarUrl!.isNotEmpty) {
+      return NetworkImage(widget.profile.avatarUrl!);
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final initials = widget.profile.displayName.isNotEmpty
         ? widget.profile.displayName[0].toUpperCase()
         : widget.profile.username[0].toUpperCase();
+
+    final avatarImage = _getAvatarImageProvider();
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
@@ -278,7 +323,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             Stack(
               clipBehavior: Clip.none,
               children: [
-                // Banner background
+                // Modern Banner background
                 Container(
                   height: 130,
                   width: double.infinity,
@@ -322,7 +367,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   left: 20,
                   bottom: -40,
                   child: GestureDetector(
-                    onTap: _showAvatarPickerSheet,
+                    onTap: _showImageSourcePicker,
                     child: Stack(
                       children: [
                         Container(
@@ -340,13 +385,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: CircleAvatar(
                             radius: 44,
                             backgroundColor: colorScheme.primary,
-                            backgroundImage: _selectedAvatarUrl != null
-                                ? NetworkImage(_selectedAvatarUrl!)
-                                : null,
-                            onBackgroundImageError: _selectedAvatarUrl != null
+                            backgroundImage: avatarImage,
+                            onBackgroundImageError: avatarImage != null
                                 ? (exception, stackTrace) {}
                                 : null,
-                            child: _selectedAvatarUrl == null
+                            child: avatarImage == null
                                 ? Text(
                                     initials,
                                     style: TextStyle(
@@ -358,7 +401,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 : null,
                           ),
                         ),
-                        // Camera icon overlay
+                        // Camera overlay badge
                         Positioned(
                           right: 2,
                           bottom: 2,
@@ -385,7 +428,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
             const SizedBox(height: 52),
 
-            // Form Content
+            // Form Fields
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Form(
@@ -393,18 +436,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Avatar change trigger button
+                    // Change photo button
                     OutlinedButton.icon(
-                      icon: const Icon(Icons.photo_library_outlined, size: 18),
+                      icon: const Icon(Icons.photo_camera_back_outlined, size: 18),
                       label: const Text('Cambiar foto de perfil'),
-                      onPressed: _showAvatarPickerSheet,
+                      onPressed: _showImageSourcePicker,
                       style: OutlinedButton.styleFrom(
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                       ),
                     ),
                     const SizedBox(height: 24),
 
-                    // Display Name Field
+                    // Display Name
                     TextFormField(
                       controller: _displayNameController,
                       maxLength: 60,
@@ -425,7 +468,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Username Field (Read-only)
+                    // Username (Read-only)
                     TextFormField(
                       initialValue: '@${widget.profile.username}',
                       readOnly: true,
@@ -440,7 +483,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // Bio Field
+                    // Bio
                     TextFormField(
                       controller: _bioController,
                       maxLength: 300,
@@ -457,30 +500,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
                       ),
                     ),
-                    const SizedBox(height: 16),
-
-                    // Avatar URL Field (Direct link input)
-                    TextFormField(
-                      controller: _avatarUrlController,
-                      decoration: InputDecoration(
-                        labelText: 'URL de imagen de perfil (opcional)',
-                        hintText: 'https://...',
-                        prefixIcon: const Icon(Icons.link_rounded),
-                        suffixIcon: _avatarUrlController.text.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear_rounded),
-                                onPressed: () {
-                                  _avatarUrlController.clear();
-                                  setState(() => _selectedAvatarUrl = null);
-                                },
-                              )
-                            : null,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                        filled: true,
-                        fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                      ),
-                    ),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 32),
                   ],
                 ),
               ),

@@ -4,7 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:brote/models/user_profile.dart';
 import 'package:brote/screens/edit_profile_screen.dart';
 import 'package:brote/screens/profile_screen.dart';
-import 'package:brote/services/auth_service.dart';
 
 void main() {
   setUp(() {
@@ -75,7 +74,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Foto de perfil'), findsOneWidget);
-    expect(find.text('Avatares destacados'), findsOneWidget);
-    expect(find.text('Ingresar URL personalizada'), findsOneWidget);
+    expect(find.text('Elegir de la galería'), findsOneWidget);
+    expect(find.text('Tomar foto'), findsOneWidget);
   });
 }

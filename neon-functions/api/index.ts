@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Pool } from "pg";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 
 const app = new Hono();
 
@@ -12,6 +13,26 @@ app.use(
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   })
 );
+
+let s3Client: S3Client | null = null;
+function getS3(): S3Client {
+  if (!s3Client) {
+    const endpoint = process.env.AWS_ENDPOINT_URL_S3;
+    const region = process.env.AWS_REGION || "us-east-2";
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID || "";
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY || "";
+    s3Client = new S3Client({
+      forcePathStyle: true,
+      region,
+      endpoint,
+      credentials: {
+        accessKeyId,
+        secretAccessKey,
+      },
+    });
+  }
+  return s3Client;
+}
 
 let pool: Pool | null = null;
 function getPool(): Pool {
@@ -364,6 +385,120 @@ const updateProfileHandler = async (c: any) => {
 
 app.put("/api/profile/me", updateProfileHandler);
 app.patch("/api/profile/me", updateProfileHandler);
+
+// Upload avatar from device to Neon Object Storage
+app.post("/api/profile/avatar", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    let fileBuffer: Buffer | null = null;
+    let contentType = "image/jpeg";
+    let fileExt = "jpg";
+
+    const reqContentType = c.req.header("content-type") || "";
+
+    if (reqContentType.includes("multipart/form-data")) {
+      const body = await c.req.parseBody();
+      const file = body["file"] || body["avatar"] || body["image"];
+      if (file && typeof file === "object" && "arrayBuffer" in file) {
+        const ab = await (file as any).arrayBuffer();
+        fileBuffer = Buffer.from(ab);
+        contentType = (file as any).type || "image/jpeg";
+      }
+    } else if (reqContentType.includes("application/json")) {
+      const body = await c.req.json();
+      if (body.image) {
+        const raw = body.image.replace(/^data:image\/\w+;base64,/, "");
+        fileBuffer = Buffer.from(raw, "base64");
+        contentType = body.mimeType || "image/jpeg";
+      }
+    } else if (reqContentType.startsWith("image/")) {
+      const ab = await c.req.arrayBuffer();
+      fileBuffer = Buffer.from(ab);
+      contentType = reqContentType;
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return c.json({ success: false, error: "No se recibió ninguna imagen válida." }, 400);
+    }
+
+    // Determine extension
+    if (contentType.includes("png")) fileExt = "png";
+    else if (contentType.includes("webp")) fileExt = "webp";
+    else if (contentType.includes("gif")) fileExt = "gif";
+    else fileExt = "jpg";
+
+    const objectKey = `${auth.userId}-${Date.now()}.${fileExt}`;
+    const s3 = getS3();
+
+    // Store in Neon Object Storage
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "avatars",
+        Key: objectKey,
+        Body: fileBuffer,
+        ContentType: contentType,
+      })
+    );
+
+    // Form public avatar URL via the API proxy
+    const host = c.req.header("host") || "br-spring-base-betng0ba-api.compute.c-9.us-east-2.aws.neon.tech";
+    const proto = host.includes("localhost") ? "http" : "https";
+    const avatarUrl = `${proto}://${host}/api/avatar/${objectKey}`;
+
+    // Update profile in PostgreSQL
+    const p = getPool();
+    const updateRes = await p.query(
+      `UPDATE public.profiles
+       SET avatar_url = $1, updated_at = now()
+       WHERE id = $2
+       RETURNING id, username, display_name, bio, avatar_url`,
+      [avatarUrl, auth.userId]
+    );
+
+    const profile = updateRes.rows[0];
+
+    return c.json({
+      success: true,
+      avatarUrl,
+      profile: {
+        id: profile.id,
+        username: profile.username,
+        displayName: profile.display_name,
+        bio: profile.bio,
+        avatarUrl: profile.avatar_url,
+      },
+    }, 200);
+  } catch (err: any) {
+    console.error("Avatar upload error:", err);
+    return c.json({ success: false, error: err.message || "Error al subir la imagen" }, 500);
+  }
+});
+
+// Serve avatar image from Neon Object Storage
+app.get("/api/avatar/:key", async (c) => {
+  try {
+    const key = c.req.param("key");
+    const s3 = getS3();
+    const res = await s3.send(
+      new GetObjectCommand({
+        Bucket: "avatars",
+        Key: key,
+      })
+    );
+    const body = await res.Body?.transformToByteArray();
+    if (!body) return c.text("Avatar not found", 404);
+    return c.body(body, 200, {
+      "Content-Type": res.ContentType || "image/jpeg",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    });
+  } catch (err: any) {
+    return c.text("Avatar not found", 404);
+  }
+});
 
 // Read any user profile by username
 app.get("/api/profile/:username", async (c) => {
