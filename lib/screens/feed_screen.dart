@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
+import '../widgets/brote_logo.dart';
 
 class PostItem {
   final String id;
@@ -59,11 +60,11 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
       isVerified: true,
       timeAgo: '22m',
       text:
-          '🌱 Acabamos de implementar los nuevos principios de permacultura en la terraza comunitaria. El sistema de riego solar ya está funcionando al 100%. ¡Los primeros brotes de albahaca y tomates cherry se ven radiantes!\n\n#HuertaUrbana #Sostenibilidad #Permacultura',
-      imageUrl: 'https://images.unsplash.com/photo-1530836369250-ef72a3f5cda8?auto=format&fit=crop&w=1200&q=80',
-      likesCount: 84,
-      commentsCount: 16,
-      repostsCount: 12,
+          'Lanzamos oficialmente la nueva versión de nuestra plataforma 🚀 Más de 50.000 usuarios conectados en las primeras horas. Gracias a toda la comunidad por el apoyo tremendo.\n\n¿Qué función les gustaría ver primero en el próximo update?\n\n#Tech #Startup #Innovacion',
+      imageUrl: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=1200&q=80',
+      likesCount: 1420,
+      commentsCount: 184,
+      repostsCount: 96,
       isLiked: true,
     ),
     PostItem(
@@ -73,10 +74,10 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
       isVerified: true,
       timeAgo: '1h',
       text:
-          'Intercambio de semillas nativas este sábado en el parque central 🌿 Traigan sus variedades criollas para diversificar nuestros cultivos. La biodiversidad es resistencia colectiva.\n\n¿Quiénes se suman?',
-      likesCount: 132,
-      commentsCount: 42,
-      repostsCount: 29,
+          '¿Alguien más manija con la temporada de recitales y festivales que se viene? 🔥 Ya tengo las entradas listas para el finde. Dejen recomendaciones de canciones para armar la playlist del viaje 👇🎧\n\n#MusicaEnVivo #Festivales #FinDeSemana',
+      likesCount: 890,
+      commentsCount: 142,
+      repostsCount: 65,
     ),
     PostItem(
       id: '3',
@@ -85,11 +86,23 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
       isVerified: false,
       timeAgo: '3h',
       text:
-          'Diseñando las fichas botánicas para identificar polinizadores en espacios urbanos 🐝 Abejas nativas, abejorros y mariposas son los verdaderos arquitectos de nuestros ecosistemas.',
-      imageUrl: 'https://images.unsplash.com/photo-1587334274328-64186a80aeee?auto=format&fit=crop&w=1200&q=80',
-      likesCount: 215,
-      commentsCount: 38,
-      repostsCount: 45,
+          'Golden hour en la ciudad 🌇 Pocas cosas le ganan a la luz de este atardecer. Capturada con lente fija de 35mm, directo de cámara sin filtros.\n\n#Fotografia #Atardecer #UrbanStyle #CityLife',
+      imageUrl: 'https://images.unsplash.com/photo-1514565131-fce0801e5785?auto=format&fit=crop&w=1200&q=80',
+      likesCount: 2340,
+      commentsCount: 215,
+      repostsCount: 178,
+    ),
+    PostItem(
+      id: '4',
+      authorName: 'Lucas Albarracín',
+      authorUsername: 'lucas_tech',
+      isVerified: true,
+      timeAgo: '5h',
+      text:
+          'Hoy 21:00hs prendemos directo en stream para probar los lanzamientos más esperados del año y debatir con ustedes en el chat 🎮 Traigan algo para tomar y nos vemos ahí.\n\n#Gaming #Stream #EnVivo #Comunidad',
+      likesCount: 640,
+      commentsCount: 88,
+      repostsCount: 52,
     ),
   ];
 
@@ -133,7 +146,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Compartir un brote',
+                    'Nueva publicación',
                     style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   IconButton(
@@ -166,7 +179,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
                       maxLines: 4,
                       autofocus: true,
                       decoration: InputDecoration(
-                        hintText: '¿Qué semilla o idea querés sembrar hoy?...',
+                        hintText: '¿Qué está pasando?...',
                         border: InputBorder.none,
                         enabledBorder: InputBorder.none,
                         focusedBorder: InputBorder.none,
@@ -201,8 +214,8 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
                     ],
                   ),
                   FilledButton.icon(
-                    icon: const Icon(Icons.eco_rounded, size: 18),
-                    label: const Text('Brotar'),
+                    icon: const Icon(Icons.send_rounded, size: 16),
+                    label: const Text('Publicar'),
                     onPressed: () {
                       final text = _composerController.text.trim();
                       if (text.isNotEmpty) {
@@ -246,15 +259,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
         titleSpacing: 16,
         title: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.eco_rounded, color: colorScheme.onPrimaryContainer, size: 20),
-            ),
+            const BroteLogo(size: 32, useDarkSquircle: true),
             const SizedBox(width: 10),
             Text(
               'brote',
@@ -528,7 +533,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
             ),
             const SizedBox(height: 8),
             Text(
-              'Explorá la pestaña Buscar para descubrir comunidades, huertas y proyectos afines.',
+              'Seguí a creadores, amigos y páginas de tu interés en la pestaña Buscar para ver sus publicaciones acá.',
               textAlign: TextAlign.center,
               style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
             ),

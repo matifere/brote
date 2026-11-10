@@ -24,11 +24,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       isVerified: true,
       timeAgo: 'hace 2 días',
       text:
-          '🌱 Cosechando los primeros brotes de la temporada. Recordatorio de que todo cambio significativo empieza como una semilla diminuta que recibe cuidado diario.\n\n#Permacultura #BroteVerde',
-      imageUrl: 'https://images.unsplash.com/photo-1592417817098-8f3d69102553?auto=format&fit=crop&w=1200&q=80',
-      likesCount: 56,
-      commentsCount: 9,
-      repostsCount: 4,
+          'Probando la cámara nueva por el centro de la ciudad. El rango dinámico que tiene es una locura total 📸🔥 Dejen sus opiniones en los comentarios.\n\n#Fotografia #Urbano #Estilo #Street',
+      imageUrl: 'https://images.unsplash.com/photo-1514565131-fce0801e5785?auto=format&fit=crop&w=1200&q=80',
+      likesCount: 342,
+      commentsCount: 28,
+      repostsCount: 14,
       isLiked: true,
     ),
     PostItem(
@@ -38,10 +38,10 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       isVerified: true,
       timeAgo: 'hace 5 días',
       text:
-          'Bienvenidos a mi espacio en Brote. Construyamos juntos una red social más humana, orgánica y enfocada en lo que de verdad florece.',
-      likesCount: 89,
-      commentsCount: 14,
-      repostsCount: 11,
+          '¡Bienvenidos a mi perfil en Brote! Síganme para ver más fotos, proyectos y contenido todos los días ✌️ Les dejo un abrazo enorme.',
+      likesCount: 512,
+      commentsCount: 46,
+      repostsCount: 22,
       isLiked: false,
     ),
   ];
@@ -99,7 +99,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     final displayName = widget.profile.displayName;
     final username = widget.profile.username;
     final bio = widget.profile.bio ??
-        'Amante de la naturaleza, permacultura y diseño sustentable. Construyendo comunidad en tiempo real.';
+        'Creador de contenido & fotografía. Apasionado por la tecnología, la música y el diseño. Conectando todos los días.';
 
     return Scaffold(
       backgroundColor: colorScheme.surface,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../widgets/brote_logo.dart';
 import 'home_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -170,20 +171,8 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                 children: [
                   // Header (Collapses when keyboard is open to preserve vertical space)
                   if (!isKeyboardOpen) ...[
-                    Container(
-                      width: 68,
-                      height: 68,
-                      decoration: BoxDecoration(
-                        color: colorScheme.primaryContainer,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.eco_rounded,
-                        size: 38,
-                        color: colorScheme.onPrimaryContainer,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
+                    const BroteLogo(size: 72, useDarkSquircle: true),
+                    const SizedBox(height: 12),
                     Text(
                       'brote',
                       style: textTheme.headlineMedium?.copyWith(
@@ -205,7 +194,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.eco_rounded, color: colorScheme.primary, size: 24),
+                        const BroteLogo(size: 26, useDarkSquircle: true),
                         const SizedBox(width: 8),
                         Text(
                           'brote',

@@ -3,6 +3,7 @@ import 'screens/auth_screen.dart';
 import 'screens/main_navigation_screen.dart';
 import 'services/auth_service.dart';
 import 'theme/brote_theme.dart';
+import 'widgets/brote_logo.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,19 +55,7 @@ class _AuthGateState extends State<AuthGate> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.eco_rounded,
-                      size: 40,
-                      color: colorScheme.onPrimaryContainer,
-                    ),
-                  ),
+                  const BroteLogo(size: 72, useDarkSquircle: true),
                   const SizedBox(height: 20),
                   SizedBox(
                     width: 28,

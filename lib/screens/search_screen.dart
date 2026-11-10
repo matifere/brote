@@ -25,42 +25,49 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   int _selectedFilterIndex = 0;
 
-  final List<String> _filters = ['Todo', 'Tendencias', 'Personas', 'Multimedia'];
+  final List<String> _filters = ['Para ti', 'Tendencias', 'Cuentas', 'Multimedia'];
 
   final List<Map<String, String>> _trends = [
-    {'tag': '#Permacultura', 'category': 'Agricultura regenerativa', 'posts': '1.4k brotes'},
-    {'tag': '#HuertaUrbana', 'category': 'Comunidad sustentable', 'posts': '2.8k brotes'},
-    {'tag': '#SemillasNativas', 'category': 'Biodiversidad local', 'posts': '890 brotes'},
-    {'tag': '#CompostajeCasero', 'category': 'Suelos vivos', 'posts': '650 brotes'},
-    {'tag': '#PlantasNativas', 'category': 'Flora autóctona', 'posts': '1.2k brotes'},
+    {'tag': '#Tecnologia', 'category': 'Tendencia en Innovación', 'posts': '42.5k publicaciones'},
+    {'tag': '#MusicaEnVivo', 'category': 'Festivales y recitales', 'posts': '28.1k publicaciones'},
+    {'tag': '#GamingLatam', 'category': 'Torneos y eSports', 'posts': '19.4k publicaciones'},
+    {'tag': '#CineYSeries', 'category': 'Cultura pop y estrenos', 'posts': '15.8k publicaciones'},
+    {'tag': '#FotografiaUrbana', 'category': 'Arte y creatividad', 'posts': '12.3k publicaciones'},
+    {'tag': '#ModaYEstilo', 'category': 'Tendencias en moda', 'posts': '9.7k publicaciones'},
   ];
 
   final List<RecommendedAccount> _accounts = [
     RecommendedAccount(
       name: 'Lucía Benítez',
-      username: 'lucia_agro',
-      bio: 'Ingeniera agrónoma | Cultivo sin pesticidas y bioconstrucción.',
+      username: 'lucia_arte',
+      bio: 'Directora de arte & fotógrafa urbana. Proyectos visuales y backstage.',
       isFollowing: false,
     ),
     RecommendedAccount(
-      name: 'Semillero Abierto',
-      username: 'semillero_la',
-      bio: 'Red comunitaria de rescate de semillas criollas en Latinoamérica.',
+      name: 'Lucas Albarracín',
+      username: 'lucas_tech',
+      bio: 'Reviews de smartphones, setups y gadgets. Streams semanales.',
       isFollowing: true,
     ),
     RecommendedAccount(
-      name: 'Diego Almada',
-      username: 'diego_botanica',
-      bio: 'Investigador de hongos y micorrizas en ecosistemas pampeanos.',
+      name: 'Clara Gómez',
+      username: 'clara_musica',
+      bio: 'Cantautora & productora. Escuchá mi nuevo single en todas las plataformas.',
+      isFollowing: false,
+    ),
+    RecommendedAccount(
+      name: 'Facundo Vega',
+      username: 'facu_fitness',
+      bio: 'Entrenamiento funcional, motivación y estilo de vida activo.',
       isFollowing: false,
     ),
   ];
 
   final List<String> _mediaThumbnails = [
-    'https://images.unsplash.com/photo-1530836369250-ef72a3f5cda8?auto=format&fit=crop&w=600&q=80',
-    'https://images.unsplash.com/photo-1587334274328-64186a80aeee?auto=format&fit=crop&w=600&q=80',
-    'https://images.unsplash.com/photo-1592417817098-8f3d69102553?auto=format&fit=crop&w=600&q=80',
-    'https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?auto=format&fit=crop&w=600&q=80',
+    'https://images.unsplash.com/photo-1514565131-fce0801e5785?auto=format&fit=crop&w=600&q=80',
+    'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=600&q=80',
+    'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=600&q=80',
+    'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=600&q=80',
   ];
 
   @override
@@ -84,7 +91,7 @@ class _SearchScreenState extends State<SearchScreen> {
             TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Buscar en Brote (temas, personas, etiquetas)...',
+                hintText: 'Buscar en Brote (personas, temas, tendencias)...',
                 prefixIcon: Icon(Icons.search_rounded, color: colorScheme.primary),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
@@ -164,9 +171,9 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
             const SizedBox(height: 24),
 
-            // Section: Cuentas recomendadas
+            // Section: Cuentas sugeridas
             Text(
-              'Cuentas recomendadas',
+              'Cuentas sugeridas',
               style: textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w800,
                 color: colorScheme.onSurface,

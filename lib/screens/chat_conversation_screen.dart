@@ -27,12 +27,12 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     super.initState();
     _messages.addAll([
       ChatMessage(
-        text: '¡Hola! ¿Cómo venís con el diseño de la nueva interfaz?',
+        text: '¡Hola! ¿Viste las fotos que subió Martín al feed?',
         isMe: false,
         time: '14:15',
       ),
       ChatMessage(
-        text: '¡Hola! Excelente, acabamos de alinear la paleta Terra con verde bosque y crema.',
+        text: '¡Hola! Sí, quedaron increíbles. Le dejé un like recién.',
         isMe: true,
         time: '14:18',
       ),

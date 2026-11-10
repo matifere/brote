@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <defs>
+    <linearGradient id="broteSproutGrad" x1="6" y1="42" x2="42" y2="6" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="50%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+    <linearGradient id="leafGrad" x1="18" y1="12" x2="38" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6ee7b7"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+  </defs>
+  
+  
+  <!-- Tallito y brote moderno/geométrico que nace hacia arriba -->
+  <path d="M16 36C18 28 22 23 24 16C26 23 30 28 32 36" stroke="url(#broteSproutGrad)" stroke-width="3" stroke-linecap="round"/>
+  <!-- Hoja izquierda de brote -->
+  <path d="M23 24C17 23 13 18 14 12C20 12 23 17 23 24Z" fill="url(#leafGrad)"/>
+  <!-- Hoja derecha de brote -->
+  <path d="M25 20C31 19 35 14 34 8C28 8 25 13 25 20Z" fill="url(#broteSproutGrad)"/>
+  <!-- Pequeño punto / semilla de energía central -->
+  <circle cx="24" cy="37" r="2.5" fill="#34d399"/>
+</svg>
