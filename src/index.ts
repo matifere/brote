@@ -2,7 +2,7 @@ import http from "node:http";
 import { config } from "./config.js";
 import { testPostgres, closePostgres } from "./services/postgres.js";
 import { testStorage } from "./services/storage.js";
-import { testAuth } from "./services/auth.js";
+import { testAuth, registerUser, loginUser } from "./services/auth.js";
 import { testFunctions } from "./services/functions.js";
 import { testRealtime } from "./services/realtime.js";
 
@@ -53,8 +53,45 @@ export async function runAllTests() {
   };
 }
 
+async function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1e6) {
+        // 1MB max body limit
+        req.destroy();
+        reject(new Error("Request payload too large"));
+      }
+    });
+    req.on("end", () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch (e: any) {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
 export function createServer() {
   return http.createServer(async (req, res) => {
+    // CORS headers for Web and mobile
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Origin");
+
+    if (req.method === "OPTIONS") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     res.setHeader("Content-Type", "application/json");
 
@@ -68,6 +105,8 @@ export function createServer() {
             branch: config.neonBranch,
             routes: [
               "/api/health",
+              "/api/auth/register",
+              "/api/auth/login",
               "/api/postgres",
               "/api/storage",
               "/api/auth",
@@ -80,6 +119,30 @@ export function createServer() {
         return;
       }
 
+      // User Registration
+      if (url.pathname === "/api/auth/register" && req.method === "POST") {
+        const body = await parseJsonBody(req);
+        const result = await registerUser({
+          username: body.username,
+          password: body.password,
+          displayName: body.displayName || body.username,
+          email: body.email,
+        });
+        res.statusCode = 201;
+        res.end(JSON.stringify({ success: true, ...result }));
+        return;
+      }
+
+      // User Login
+      if (url.pathname === "/api/auth/login" && req.method === "POST") {
+        const body = await parseJsonBody(req);
+        const result = await loginUser(body.username || body.email, body.password);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ success: true, ...result }));
+        return;
+      }
+
+      // Service Tests
       if (url.pathname === "/api/postgres") {
         const data = await testPostgres();
         res.statusCode = 200;
@@ -125,8 +188,8 @@ export function createServer() {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: "Not Found", path: url.pathname }));
     } catch (err: any) {
-      res.statusCode = 500;
-      res.end(JSON.stringify({ error: err.message || "Internal Server Error" }));
+      res.statusCode = 400;
+      res.end(JSON.stringify({ success: false, error: err.message || "Error en la solicitud" }));
     }
   });
 }
