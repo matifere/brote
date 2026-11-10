@@ -79,6 +79,7 @@ void main() {
     // Verify MainNavigation destinations
     expect(find.text('Feed'), findsWidgets);
     expect(find.text('Buscar'), findsOneWidget);
+    expect(find.text('Publicar'), findsOneWidget);
     expect(find.text('Chats'), findsOneWidget);
     expect(find.text('Perfil'), findsOneWidget);
 

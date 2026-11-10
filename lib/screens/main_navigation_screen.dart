@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import 'chats_screen.dart';
+import 'create_post_screen.dart';
 import 'feed_screen.dart';
 import 'profile_screen.dart';
 import 'search_screen.dart';
@@ -25,9 +26,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _pages = [
       FeedScreen(
         profile: widget.profile,
-        onOpenProfile: () => setState(() => _currentIndex = 3),
+        onOpenProfile: () => setState(() => _currentIndex = 4),
       ),
       const SearchScreen(),
+      CreatePostScreen(
+        profile: widget.profile,
+        onPublished: () => setState(() => _currentIndex = 0),
+      ),
       const ChatsScreen(),
       ProfileScreen(profile: widget.profile),
     ];
@@ -55,6 +60,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             icon: Icon(Icons.search_rounded),
             selectedIcon: Icon(Icons.search_rounded),
             label: 'Buscar',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.add_box_outlined),
+            selectedIcon: Icon(Icons.add_box_rounded),
+            label: 'Publicar',
           ),
           NavigationDestination(
             icon: Icon(Icons.chat_bubble_outline_rounded),

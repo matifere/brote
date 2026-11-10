@@ -52,7 +52,6 @@ class FeedScreen extends StatefulWidget {
 
 class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final TextEditingController _composerController = TextEditingController();
 
   final List<PostItem> _posts = [
     PostItem(
@@ -117,137 +116,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
   @override
   void dispose() {
     _tabController.dispose();
-    _composerController.dispose();
     super.dispose();
-  }
-
-  void _showNewPostModal() {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Nueva publicación',
-                    style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: () => Navigator.of(ctx).pop(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: colorScheme.primaryContainer,
-                    child: Text(
-                      widget.profile.displayName.isNotEmpty
-                          ? widget.profile.displayName[0].toUpperCase()
-                          : '?',
-                      style: TextStyle(
-                        color: colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _composerController,
-                      maxLines: 4,
-                      autofocus: true,
-                      decoration: InputDecoration(
-                        hintText: '¿Qué está pasando?...',
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        fillColor: Colors.transparent,
-                        hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Agregar foto',
-                        icon: Icon(Icons.image_outlined, color: colorScheme.primary),
-                        onPressed: () {},
-                      ),
-                      IconButton(
-                        tooltip: 'Etiqueta o tema',
-                        icon: Icon(Icons.tag_rounded, color: colorScheme.primary),
-                        onPressed: () {},
-                      ),
-                      IconButton(
-                        tooltip: 'Ubicación',
-                        icon: Icon(Icons.location_on_outlined, color: colorScheme.primary),
-                        onPressed: () {},
-                      ),
-                    ],
-                  ),
-                  FilledButton.icon(
-                    icon: const Icon(Icons.send_rounded, size: 16),
-                    label: const Text('Publicar'),
-                    onPressed: () {
-                      final text = _composerController.text.trim();
-                      if (text.isNotEmpty) {
-                        setState(() {
-                          _posts.insert(
-                            0,
-                            PostItem(
-                              id: DateTime.now().millisecondsSinceEpoch.toString(),
-                              authorName: widget.profile.displayName,
-                              authorUsername: widget.profile.username,
-                              timeAgo: 'ahora',
-                              text: text,
-                              likesCount: 0,
-                              commentsCount: 0,
-                              repostsCount: 0,
-                            ),
-                          );
-                        });
-                        _composerController.clear();
-                        Navigator.of(ctx).pop();
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   @override
@@ -352,13 +221,6 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
             ),
           ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: colorScheme.primary,
-        foregroundColor: colorScheme.onPrimary,
-        tooltip: 'Crear publicación',
-        onPressed: _showNewPostModal,
-        child: const Icon(Icons.edit_note_rounded, size: 26),
       ),
       body: TabBarView(
         controller: _tabController,
