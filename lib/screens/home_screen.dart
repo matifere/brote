@@ -11,10 +11,12 @@ class HomeScreen extends StatelessWidget {
     required this.profile,
   });
 
-  void _handleLogout(BuildContext context) {
-    AuthService().logout();
-    Navigator.of(context).pushReplacement(
+  Future<void> _handleLogout(BuildContext context) async {
+    await AuthService().logout();
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AuthScreen()),
+      (route) => false,
     );
   }
 

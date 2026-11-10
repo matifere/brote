@@ -231,3 +231,32 @@ export async function loginUser(usernameOrEmail: string, password: string): Prom
     token,
   };
 }
+
+export async function validateSession(token: string): Promise<AuthResult | null> {
+  if (!token) return null;
+  const pool = getPostgresPool();
+  const res = await pool.query(
+    `SELECT s.token, u.id, u.email, u.name, p.username, p.display_name, p.bio, p.avatar_url
+     FROM neon_auth.session s
+     INNER JOIN neon_auth.user u ON s."userId" = u.id
+     INNER JOIN public.profiles p ON u.id = p.id
+     WHERE s.token = $1 AND s."expiresAt" > now()
+     LIMIT 1`,
+    [token]
+  );
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  return {
+    user: { id: row.id, email: row.email, name: row.name },
+    profile: {
+      id: row.id,
+      username: row.username,
+      displayName: row.display_name,
+      bio: row.bio,
+      avatarUrl: row.avatar_url,
+    },
+    token: row.token,
+  };
+}
+
+

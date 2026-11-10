@@ -2,7 +2,7 @@ import http from "node:http";
 import { config } from "./config.js";
 import { testPostgres, closePostgres } from "./services/postgres.js";
 import { testStorage } from "./services/storage.js";
-import { testAuth, registerUser, loginUser } from "./services/auth.js";
+import { testAuth, registerUser, loginUser, validateSession } from "./services/auth.js";
 import { testFunctions } from "./services/functions.js";
 import { testRealtime } from "./services/realtime.js";
 
@@ -137,6 +137,26 @@ export function createServer() {
       if (url.pathname === "/api/auth/login" && req.method === "POST") {
         const body = await parseJsonBody(req);
         const result = await loginUser(body.username || body.email, body.password);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ success: true, ...result }));
+        return;
+      }
+
+      // Validate session / Current user
+      if (url.pathname === "/api/auth/me" && req.method === "GET") {
+        const authHeader = req.headers["authorization"] || "";
+        const token = authHeader.replace(/^Bearer\s+/i, "") || (url.searchParams.get("token") || "");
+        if (!token) {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ success: false, error: "No se proporcionó token de sesión" }));
+          return;
+        }
+        const result = await validateSession(token);
+        if (!result) {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ success: false, error: "Sesión inválida o expirada" }));
+          return;
+        }
         res.statusCode = 200;
         res.end(JSON.stringify({ success: true, ...result }));
         return;
