@@ -16,8 +16,7 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _ProfileScreenState extends State<ProfileScreen> {
   late UserProfile _currentProfile;
 
   bool get _isOwnProfile =>
@@ -80,7 +79,6 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
     final isMe = AuthService().currentUser?.id == widget.profile.id;
     _currentProfile = isMe ? (AuthService().currentUser ?? widget.profile) : widget.profile;
     if (isMe) {
@@ -98,7 +96,6 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   @override
   void dispose() {
     AuthService().currentUserNotifier.removeListener(_onProfileChanged);
-    _tabController.dispose();
     super.dispose();
   }
 
@@ -443,48 +440,22 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                       _buildFollowRequestsBanner(colorScheme, textTheme),
                       const SizedBox(height: 16),
                     ],
+
+                    Divider(
+                      height: 1,
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                    ),
                   ],
                 ),
               ),
             ],
           ),
         ),
-            if (!_isContentLocked)
-              SliverPersistentHeader(
-                pinned: true,
-                delegate: _SliverAppBarDelegate(
-                  TabBar(
-                    controller: _tabController,
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    indicatorColor: colorScheme.primary,
-                    indicatorWeight: 3,
-                    labelColor: colorScheme.primary,
-                    unselectedLabelColor: colorScheme.onSurfaceVariant,
-                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                    tabs: const [
-                      Tab(text: 'Publicaciones'),
-                      Tab(text: 'Respuestas'),
-                      Tab(text: 'Multimedia'),
-                      Tab(text: 'Me gusta'),
-                    ],
-                  ),
-                  colorScheme.surface,
-                ),
-              ),
           ];
         },
         body: _isContentLocked
             ? _buildPrivateAccountNotice(colorScheme, textTheme)
-            : TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildPostsStream(colorScheme, textTheme),
-                  _buildEmptyTab('Aún no hay respuestas publicadas.', colorScheme, textTheme),
-                  _buildEmptyTab('Aún no hay fotos ni videos subidos.', colorScheme, textTheme),
-                  _buildEmptyTab('Aún no diste "me gusta" a publicaciones.', colorScheme, textTheme),
-                ],
-              ),
+            : _buildPostsStream(colorScheme, textTheme),
       ),
     );
   }
@@ -541,6 +512,36 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   }
 
   Widget _buildPostsStream(ColorScheme colorScheme, TextTheme textTheme) {
+    if (_userPosts.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.notes_rounded, size: 48, color: colorScheme.outline),
+              const SizedBox(height: 12),
+              Text(
+                'Aún no hay publicaciones',
+                style: textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Las publicaciones que comparta este perfil aparecerán acá.',
+                textAlign: TextAlign.center,
+                style: textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return ListView.separated(
       padding: EdgeInsets.zero,
       itemCount: _userPosts.length,
@@ -670,19 +671,6 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     );
   }
 
-  Widget _buildEmptyTab(String message, ColorScheme colorScheme, TextTheme textTheme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-        ),
-      ),
-    );
-  }
-
   Widget _buildFollowRequestsBanner(ColorScheme colorScheme, TextTheme textTheme) {
     final count = _currentProfile.pendingRequestsCount;
     final hasRequests = count > 0;
@@ -778,27 +766,4 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       ),
     );
   }
-}
-
-class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  final TabBar _tabBar;
-  final Color _bgColor;
-
-  _SliverAppBarDelegate(this._tabBar, this._bgColor);
-
-  @override
-  double get minExtent => _tabBar.preferredSize.height;
-  @override
-  double get maxExtent => _tabBar.preferredSize.height;
-
-  @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return Container(
-      color: _bgColor,
-      child: _tabBar,
-    );
-  }
-
-  @override
-  bool shouldRebuild(_SliverAppBarDelegate oldDelegate) => false;
 }
