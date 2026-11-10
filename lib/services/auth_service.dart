@@ -1,9 +1,96 @@
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_profile.dart';
+
+class SessionStorage {
+  static const String _kTokenKey = 'brote_session_token';
+  static const String _kProfileKey = 'brote_user_profile';
+
+  static File? _getFallbackFile() {
+    if (kIsWeb) return null;
+    try {
+      if (Platform.isAndroid) {
+        return File('/data/data/com.example.brote/session.json');
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> save({required String token, required Map<String, dynamic> profile}) async {
+    // 1. SharedPreferences
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kTokenKey, token);
+      await prefs.setString(_kProfileKey, jsonEncode(profile));
+    } catch (e) {
+      debugPrint('SharedPreferences save notice (may require full rebuild): $e');
+    }
+
+    // 2. Direct sandbox file fallback (guarantees persistence even without native plugin compilation)
+    try {
+      final file = _getFallbackFile();
+      if (file != null) {
+        await file.writeAsString(jsonEncode({'token': token, 'profile': profile}), flush: true);
+      }
+    } catch (e) {
+      debugPrint('Sandbox file save notice: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>?> load() async {
+    // 1. Try SharedPreferences
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString(_kTokenKey);
+      final profileStr = prefs.getString(_kProfileKey);
+      if (token != null && profileStr != null) {
+        return {
+          'token': token,
+          'profile': jsonDecode(profileStr) as Map<String, dynamic>,
+        };
+      }
+    } catch (e) {
+      debugPrint('SharedPreferences load notice: $e');
+    }
+
+    // 2. Try direct sandbox file fallback
+    try {
+      final file = _getFallbackFile();
+      if (file != null && await file.exists()) {
+        final content = await file.readAsString();
+        if (content.isNotEmpty) {
+          final data = jsonDecode(content) as Map<String, dynamic>;
+          return {
+            'token': data['token'] as String,
+            'profile': data['profile'] as Map<String, dynamic>,
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('Sandbox file load notice: $e');
+    }
+
+    return null;
+  }
+
+  static Future<void> clear() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kTokenKey);
+      await prefs.remove(_kProfileKey);
+    } catch (_) {}
+
+    try {
+      final file = _getFallbackFile();
+      if (file != null && await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+}
 
 class AuthService {
   // Singleton pattern
@@ -11,8 +98,11 @@ class AuthService {
   factory AuthService() => _instance;
   AuthService._internal();
 
-  static const String _kTokenKey = 'brote_session_token';
-  static const String _kProfileKey = 'brote_user_profile';
+  /// Dedicated cloud server on Neon Functions
+  static const String neonServerUrl =
+      'https://br-spring-base-betng0ba-api.compute.c-9.us-east-2.aws.neon.tech';
+
+  String get baseUrl => neonServerUrl;
 
   String? _sessionToken;
   UserProfile? _currentUser;
@@ -21,46 +111,32 @@ class AuthService {
   UserProfile? get currentUser => _currentUser;
   bool get isAuthenticated => _sessionToken != null && _currentUser != null;
 
-  /// Default API URL based on platform
-  static String get defaultBaseUrl {
-    if (kIsWeb) {
-      return 'http://localhost:3333';
-    }
-    try {
-      if (Platform.isAndroid) {
-        return 'http://10.0.2.2:3333';
-      }
-    } catch (_) {
-      // In case Platform is unsupported on target
-    }
-    return 'http://localhost:3333';
-  }
-
-  String baseUrl = defaultBaseUrl;
-
-  /// Restores session from persistent device storage
+  /// Restores session from persistent storage on device
   Future<bool> tryAutoLogin() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString(_kTokenKey);
-      final profileStr = prefs.getString(_kProfileKey);
-
-      if (token == null || profileStr == null) {
+      final savedData = await SessionStorage.load();
+      if (savedData == null) {
         return false;
       }
 
-      // Restore locally cached session immediately
+      final token = savedData['token'] as String?;
+      final profileMap = savedData['profile'] as Map<String, dynamic>?;
+
+      if (token == null || profileMap == null) {
+        return false;
+      }
+
+      // Restore session in memory immediately
       _sessionToken = token;
-      final profileMap = jsonDecode(profileStr) as Map<String, dynamic>;
       _currentUser = UserProfile.fromJson(profileMap, email: profileMap['email'] as String?);
 
-      // Verify token with backend in background
-      _verifyTokenWithBackend(token).then((isValid) {
+      // Verify and update profile with Neon in background
+      _verifyTokenWithNeon(token).then((isValid) {
         if (!isValid) {
           logout();
         }
       }).catchError((_) {
-        // If offline, keep local session
+        // Keep cached session if offline
       });
 
       return true;
@@ -70,7 +146,7 @@ class AuthService {
     }
   }
 
-  Future<bool> _verifyTokenWithBackend(String token) async {
+  Future<bool> _verifyTokenWithNeon(String token) async {
     try {
       final uri = Uri.parse('$baseUrl/api/auth/me');
       final res = await http.get(
@@ -79,7 +155,7 @@ class AuthService {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-      ).timeout(const Duration(seconds: 4));
+      ).timeout(const Duration(seconds: 5));
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -87,27 +163,17 @@ class AuthService {
           final profileJson = data['profile'] as Map<String, dynamic>;
           final userEmail = data['user']?['email'] as String?;
           _currentUser = UserProfile.fromJson(profileJson, email: userEmail);
-          await _saveSession(token, _currentUser!);
+          await SessionStorage.save(token: token, profile: _currentUser!.toJson());
           return true;
         }
       } else if (res.statusCode == 401) {
-        // Session expired or revoked on server
+        // Session expired on server
         return false;
       }
     } catch (_) {
-      // Network timeout / offline -> keep cached session
+      // Offline / network issue: don't logout, allow cached use
     }
     return true;
-  }
-
-  Future<void> _saveSession(String token, UserProfile profile) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_kTokenKey, token);
-      await prefs.setString(_kProfileKey, jsonEncode(profile.toJson()));
-    } catch (e) {
-      debugPrint('Error saving session: $e');
-    }
   }
 
   /// Register a new user with username and password
@@ -130,7 +196,7 @@ class AuthService {
               if (email != null && email.isNotEmpty) 'email': email,
             }),
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 15));
 
       final Map<String, dynamic> data = jsonDecode(response.body);
 
@@ -141,7 +207,7 @@ class AuthService {
         _currentUser = UserProfile.fromJson(profileJson, email: userEmail);
 
         if (_sessionToken != null && _currentUser != null) {
-          await _saveSession(_sessionToken!, _currentUser!);
+          await SessionStorage.save(token: _sessionToken!, profile: _currentUser!.toJson());
         }
 
         return AuthResponse.success(
@@ -153,7 +219,7 @@ class AuthService {
         return AuthResponse.failure(error);
       }
     } catch (e) {
-      return AuthResponse.failure('Error de conexión: $e');
+      return AuthResponse.failure('Error al conectar con Neon: $e');
     }
   }
 
@@ -173,7 +239,7 @@ class AuthService {
               'password': password,
             }),
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 15));
 
       final Map<String, dynamic> data = jsonDecode(response.body);
 
@@ -184,7 +250,7 @@ class AuthService {
         _currentUser = UserProfile.fromJson(profileJson, email: userEmail);
 
         if (_sessionToken != null && _currentUser != null) {
-          await _saveSession(_sessionToken!, _currentUser!);
+          await SessionStorage.save(token: _sessionToken!, profile: _currentUser!.toJson());
         }
 
         return AuthResponse.success(
@@ -196,20 +262,14 @@ class AuthService {
         return AuthResponse.failure(error);
       }
     } catch (e) {
-      return AuthResponse.failure('Error de conexión: $e');
+      return AuthResponse.failure('Error al conectar con Neon: $e');
     }
   }
 
-  /// Logout user and clear stored credentials
+  /// Logout user and clear stored credentials on device
   Future<void> logout() async {
     _sessionToken = null;
     _currentUser = null;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_kTokenKey);
-      await prefs.remove(_kProfileKey);
-    } catch (e) {
-      debugPrint('Error clearing session: $e');
-    }
+    await SessionStorage.clear();
   }
 }

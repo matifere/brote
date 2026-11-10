@@ -8,6 +8,7 @@ export default defineConfig({
   auth: true,
   functions: {
     hello: { name: "Hello World", source: "./hello.ts" },
+    api: { name: "Brote API", source: "./neon-functions/api/index.ts" },
   },
   buckets: {
     // "private" is the default; use "public_read" for anonymous reads

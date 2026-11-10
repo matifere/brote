@@ -142,66 +142,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     }
   }
 
-  void _showServerConfigDialog() {
-    final textController = TextEditingController(text: _authService.baseUrl);
-    final colorScheme = Theme.of(context).colorScheme;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colorScheme.surface,
-        title: Text(
-          'Configurar Servidor',
-          style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.bold),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'URL del Backend Brote:',
-              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: textController,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: colorScheme.surfaceContainerHighest,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                hintText: 'http://10.0.2.2:3333',
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '• Emulador Android: http://10.0.2.2:3333\n• Dispositivo físico: http://<tu-ip-local>:3333\n• Web/Desktop/iOS: http://localhost:3333',
-              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 11, height: 1.4),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            child: Text('Cancelar', style: TextStyle(color: colorScheme.onSurfaceVariant)),
-            onPressed: () => Navigator.of(ctx).pop(),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: colorScheme.primary,
-              foregroundColor: colorScheme.onPrimary,
-            ),
-            child: const Text('Guardar'),
-            onPressed: () {
-              setState(() {
-                _authService.baseUrl = textController.text.trim();
-              });
-              Navigator.of(ctx).pop();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -212,18 +152,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     return Scaffold(
       backgroundColor: colorScheme.surface,
       resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        backgroundColor: colorScheme.surface,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        actions: [
-          IconButton(
-            tooltip: 'Configuración de servidor API',
-            icon: Icon(Icons.settings_outlined, color: colorScheme.onSurfaceVariant),
-            onPressed: _showServerConfigDialog,
-          ),
-        ],
-      ),
       body: SafeArea(
         child: SingleChildScrollView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
