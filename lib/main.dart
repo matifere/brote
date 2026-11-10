@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'screens/auth_screen.dart';
-import 'screens/home_screen.dart';
+import 'screens/main_navigation_screen.dart';
 import 'services/auth_service.dart';
+import 'theme/brote_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,26 +14,12 @@ class BroteApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seedColor = Color(0xFF2E7D32);
-
     return MaterialApp(
       title: 'Brote',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.system,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: seedColor,
-          brightness: Brightness.light,
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: seedColor,
-          brightness: Brightness.dark,
-        ),
-      ),
+      theme: BroteTheme.lightTheme(context),
+      darkTheme: BroteTheme.darkTheme(context),
       home: const AuthGate(),
     );
   }
@@ -98,7 +85,7 @@ class _AuthGateState extends State<AuthGate> {
         final isAuthenticated = snapshot.data == true && AuthService().currentUser != null;
 
         if (isAuthenticated) {
-          return HomeScreen(profile: AuthService().currentUser!);
+          return MainNavigationScreen(profile: AuthService().currentUser!);
         } else {
           return const AuthScreen();
         }

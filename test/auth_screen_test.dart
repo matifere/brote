@@ -53,7 +53,7 @@ void main() {
     expect(find.text('Ingresá tu nombre'), findsOneWidget);
   });
 
-  testWidgets('AuthGate automatically navigates to HomeScreen when session is stored', (WidgetTester tester) async {
+  testWidgets('AuthGate navigates to MainNavigationScreen with Feed, Search, Chats, and Profile', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() {
@@ -76,10 +76,23 @@ void main() {
     await tester.pumpWidget(const BroteApp());
     await tester.pumpAndSettle();
 
-    // Verify it automatically logged into HomeScreen
+    // Verify MainNavigation destinations
+    expect(find.text('Feed'), findsWidgets);
+    expect(find.text('Buscar'), findsOneWidget);
+    expect(find.text('Chats'), findsOneWidget);
+    expect(find.text('Perfil'), findsOneWidget);
+
+    // Verify Feed elements are active
+    expect(find.text('Para ti'), findsOneWidget);
+    expect(find.text('Siguiendo'), findsOneWidget);
+
+    // Navigate to Profile tab
+    await tester.tap(find.text('Perfil'));
+    await tester.pumpAndSettle();
+
+    // Verify Profile displays user identity
     expect(find.text('Matias'), findsWidgets);
-    expect(find.text('@matifere'), findsOneWidget);
-    expect(find.text('Sesión iniciada con éxito'), findsOneWidget);
-    expect(find.text('Cerrar Sesión'), findsOneWidget);
+    expect(find.text('@matifere'), findsWidgets);
+    expect(find.text('Publicaciones'), findsWidgets);
   });
 }
