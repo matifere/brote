@@ -18,11 +18,33 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   late UserProfile _currentProfile;
-  bool _isFollowing = false;
 
   bool get _isOwnProfile =>
       AuthService().currentUser == null ||
       AuthService().currentUser?.id == _currentProfile.id;
+
+  bool get _isContentLocked =>
+      !_isOwnProfile && _currentProfile.isPrivate && !_currentProfile.isFollowing;
+
+  bool _isFollowLoading = false;
+
+  Future<void> _handleFollowToggle() async {
+    setState(() => _isFollowLoading = true);
+    if (_currentProfile.isFollowing || _currentProfile.isPending) {
+      final updated = await AuthService().unfollowUser(_currentProfile.id);
+      if (mounted && updated != null) {
+        setState(() => _currentProfile = updated);
+      }
+    } else {
+      final updated = await AuthService().followUser(_currentProfile.id);
+      if (mounted && updated != null) {
+        setState(() => _currentProfile = updated);
+      }
+    }
+    if (mounted) {
+      setState(() => _isFollowLoading = false);
+    }
+  }
 
   final List<PostItem> _userPosts = [
     PostItem(
@@ -63,6 +85,12 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     if (isMe) {
       AuthService().currentUserNotifier.addListener(_onProfileChanged);
       AuthService().fetchMyProfile();
+    } else {
+      AuthService().fetchUserProfile(widget.profile.username).then((fresh) {
+        if (fresh != null && mounted) {
+          setState(() => _currentProfile = fresh);
+        }
+      });
     }
   }
 
@@ -308,23 +336,31 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                               )
                             else
                               FilledButton(
-                                onPressed: () {
-                                  setState(() => _isFollowing = !_isFollowing);
-                                },
+                                onPressed: _isFollowLoading ? null : _handleFollowToggle,
                                 style: FilledButton.styleFrom(
-                                  backgroundColor: _isFollowing
+                                  backgroundColor: (_currentProfile.isFollowing || _currentProfile.isPending)
                                       ? colorScheme.surfaceContainerHighest
                                       : colorScheme.primary,
-                                  foregroundColor: _isFollowing
+                                  foregroundColor: (_currentProfile.isFollowing || _currentProfile.isPending)
                                       ? colorScheme.onSurface
                                       : colorScheme.onPrimary,
                                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                                 ),
-                                child: Text(
-                                  _isFollowing ? 'Siguiendo' : 'Seguir',
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
+                                child: _isFollowLoading
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : Text(
+                                        _currentProfile.isFollowing
+                                            ? 'Siguiendo'
+                                            : _currentProfile.isPending
+                                                ? 'Solicitado'
+                                                : 'Seguir',
+                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      ),
                               ),
                           ],
                         ),
@@ -341,7 +377,20 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                               ),
                             ),
                             const SizedBox(width: 6),
-                            Icon(Icons.verified, size: 20, color: colorScheme.primary),
+                            if (_currentProfile.isPrivate)
+                              Tooltip(
+                                message: 'Cuenta privada',
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.surfaceContainerHighest,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(Icons.lock_rounded, size: 14, color: colorScheme.onSurfaceVariant),
+                                ),
+                              )
+                            else
+                              Icon(Icons.verified, size: 20, color: colorScheme.primary),
                           ],
                         ),
                         const SizedBox(height: 2),
@@ -364,11 +413,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     // Metrics Row (Publicaciones, Seguidores, Siguiendo)
                     Row(
                       children: [
-                        _buildMetric('142', 'Publicaciones', textTheme, colorScheme),
+                        _buildMetric('${_userPosts.length}', 'Publicaciones', textTheme, colorScheme),
                         const SizedBox(width: 20),
-                        _buildMetric('4.8k', 'Seguidores', textTheme, colorScheme),
+                        _buildMetric('${_currentProfile.followersCount}', 'Seguidores', textTheme, colorScheme),
                         const SizedBox(width: 20),
-                        _buildMetric('620', 'Siguiendo', textTheme, colorScheme),
+                        _buildMetric('${_currentProfile.followingCount}', 'Siguiendo', textTheme, colorScheme),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -378,37 +427,72 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             ],
           ),
         ),
-            SliverPersistentHeader(
-              pinned: true,
-              delegate: _SliverAppBarDelegate(
-                TabBar(
-                  controller: _tabController,
-                  isScrollable: true,
-                  tabAlignment: TabAlignment.start,
-                  indicatorColor: colorScheme.primary,
-                  indicatorWeight: 3,
-                  labelColor: colorScheme.primary,
-                  unselectedLabelColor: colorScheme.onSurfaceVariant,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  tabs: const [
-                    Tab(text: 'Publicaciones'),
-                    Tab(text: 'Respuestas'),
-                    Tab(text: 'Multimedia'),
-                    Tab(text: 'Me gusta'),
-                  ],
+            if (!_isContentLocked)
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _SliverAppBarDelegate(
+                  TabBar(
+                    controller: _tabController,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    indicatorColor: colorScheme.primary,
+                    indicatorWeight: 3,
+                    labelColor: colorScheme.primary,
+                    unselectedLabelColor: colorScheme.onSurfaceVariant,
+                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    tabs: const [
+                      Tab(text: 'Publicaciones'),
+                      Tab(text: 'Respuestas'),
+                      Tab(text: 'Multimedia'),
+                      Tab(text: 'Me gusta'),
+                    ],
+                  ),
+                  colorScheme.surface,
                 ),
-                colorScheme.surface,
               ),
-            ),
           ];
         },
-        body: TabBarView(
-          controller: _tabController,
+        body: _isContentLocked
+            ? _buildPrivateAccountNotice(colorScheme, textTheme)
+            : TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildPostsStream(colorScheme, textTheme),
+                  _buildEmptyTab('Aún no hay respuestas publicadas.', colorScheme, textTheme),
+                  _buildEmptyTab('Aún no hay fotos ni videos subidos.', colorScheme, textTheme),
+                  _buildEmptyTab('Aún no diste "me gusta" a publicaciones.', colorScheme, textTheme),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildPrivateAccountNotice(ColorScheme colorScheme, TextTheme textTheme) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _buildPostsStream(colorScheme, textTheme),
-            _buildEmptyTab('Aún no hay respuestas publicadas.', colorScheme, textTheme),
-            _buildEmptyTab('Aún no hay fotos ni videos subidos.', colorScheme, textTheme),
-            _buildEmptyTab('Aún no diste "me gusta" a publicaciones.', colorScheme, textTheme),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHigh,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.lock_outline_rounded, size: 48, color: colorScheme.primary),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Esta cuenta es privada',
+              style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Seguí a esta cuenta para ver sus fotos y publicaciones.',
+              textAlign: TextAlign.center,
+              style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
           ],
         ),
       ),

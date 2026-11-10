@@ -17,6 +17,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _displayNameController;
   late final TextEditingController _bioController;
+  late bool _isPrivate;
 
   final ImagePicker _picker = ImagePicker();
   Uint8List? _newImageBytes;
@@ -34,6 +35,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.initState();
     _displayNameController = TextEditingController(text: widget.profile.displayName);
     _bioController = TextEditingController(text: widget.profile.bio ?? '');
+    _isPrivate = widget.profile.isPrivate;
   }
 
   @override
@@ -399,12 +401,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         finalBannerUrl = null;
       }
 
-      // 3. Update display name, bio, avatar and banner on Neon
+      // 3. Update display name, bio, avatar, banner and privacy on Neon
       final updateResponse = await AuthService().updateProfile(
         displayName: newDisplayName,
         bio: newBio.isNotEmpty ? newBio : null,
         avatarUrl: _removeAvatar ? '' : finalAvatarUrl,
         bannerUrl: _removeBanner ? '' : finalBannerUrl,
+        isPrivate: _isPrivate,
       );
 
       if (!mounted) return;
@@ -777,6 +780,40 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                         filled: true,
                         fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Privacy Settings Toggle
+                    Material(
+                      color: colorScheme.surfaceContainerLow,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: SwitchListTile(
+                        value: _isPrivate,
+                        onChanged: (val) => setState(() => _isPrivate = val),
+                        secondary: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: _isPrivate ? colorScheme.primaryContainer : colorScheme.surfaceContainerHighest,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _isPrivate ? Icons.lock_rounded : Icons.lock_open_rounded,
+                            color: _isPrivate ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+                            size: 20,
+                          ),
+                        ),
+                        title: const Text('Cuenta privada', style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(
+                          _isPrivate
+                              ? 'Solo las personas que apruebes podrán ver tus publicaciones.'
+                              : 'Cualquier persona puede ver tu perfil y publicaciones.',
+                          style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 32),

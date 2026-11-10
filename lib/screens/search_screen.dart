@@ -111,9 +111,20 @@ class _SearchScreenState extends State<SearchScreen> {
                 )
               : null,
         ),
-        title: Text(
-          profile.displayName,
-          style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                profile.displayName,
+                style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (profile.isPrivate) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.lock_rounded, size: 14, color: colorScheme.onSurfaceVariant),
+            ],
+          ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

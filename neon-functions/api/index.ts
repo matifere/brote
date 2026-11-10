@@ -292,6 +292,63 @@ async function getAuthenticatedUser(c: any): Promise<{ userId: string; email: st
   };
 }
 
+// Helper to construct rich profile payload with follow counts and privacy status
+async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | null) {
+  if (!profileRow) return null;
+  const profileId = profileRow.id;
+
+  const countsRes = await p.query(
+    `SELECT
+      (SELECT COUNT(*)::int FROM public.follows WHERE following_id = $1 AND status = 'accepted') as followers_count,
+      (SELECT COUNT(*)::int FROM public.follows WHERE follower_id = $1 AND status = 'accepted') as following_count`,
+    [profileId]
+  );
+  const followersCount = countsRes.rows[0]?.followers_count ?? 0;
+  const followingCount = countsRes.rows[0]?.following_count ?? 0;
+
+  let followStatus: "none" | "pending" | "accepted" = "none";
+  let isFollowedBy = false;
+  let canViewContent = true;
+
+  const isOwner = Boolean(viewerId && viewerId === profileId);
+  const isPrivate = Boolean(profileRow.is_private);
+
+  if (viewerId && !isOwner) {
+    const relRes = await p.query(
+      `SELECT
+        (SELECT status FROM public.follows WHERE follower_id = $1 AND following_id = $2) as my_status,
+        (SELECT 1 FROM public.follows WHERE follower_id = $2 AND following_id = $1 AND status = 'accepted') as their_status`,
+      [viewerId, profileId]
+    );
+    const relRow = relRes.rows[0];
+    if (relRow?.my_status) {
+      followStatus = relRow.my_status;
+    }
+    if (relRow?.their_status) {
+      isFollowedBy = true;
+    }
+  }
+
+  if (isPrivate && !isOwner && followStatus !== "accepted") {
+    canViewContent = false;
+  }
+
+  return {
+    id: profileRow.id,
+    username: profileRow.username,
+    displayName: profileRow.display_name,
+    bio: profileRow.bio,
+    avatarUrl: profileRow.avatar_url,
+    bannerUrl: profileRow.banner_url,
+    isPrivate,
+    followersCount,
+    followingCount,
+    followStatus,
+    isFollowedBy,
+    canViewContent,
+  };
+}
+
 // Read own profile
 app.get("/api/profile/me", async (c) => {
   try {
@@ -302,24 +359,17 @@ app.get("/api/profile/me", async (c) => {
 
     const p = getPool();
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     if (profileRes.rows.length === 0) {
       return c.json({ success: false, error: "Perfil no encontrado" }, 404);
     }
-    const profile = profileRes.rows[0];
+    const profile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
 
     return c.json({
       success: true,
-      profile: {
-        id: profile.id,
-        username: profile.username,
-        displayName: profile.display_name,
-        bio: profile.bio,
-        avatarUrl: profile.avatar_url,
-        bannerUrl: profile.banner_url,
-      },
+      profile,
     });
   } catch (err: any) {
     return c.json({ success: false, error: err.message || "Error al obtener perfil" }, 500);
@@ -367,8 +417,13 @@ const updateProfileHandler = async (c: any) => {
       values.push(body.bannerUrl && body.bannerUrl.trim().length > 0 ? body.bannerUrl.trim() : null);
     }
 
+    if (body.isPrivate !== undefined) {
+      updates.push(`is_private = $${paramIndex++}`);
+      values.push(Boolean(body.isPrivate));
+    }
+
     values.push(auth.userId);
-    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url`;
+    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private`;
     const updateRes = await p.query(sql, values);
 
     // Keep auth user name synced
@@ -377,17 +432,10 @@ const updateProfileHandler = async (c: any) => {
       [displayName, auth.userId]
     );
 
-    const updated = updateRes.rows[0];
+    const profile = await buildProfilePayload(p, updateRes.rows[0], auth.userId);
     return c.json({
       success: true,
-      profile: {
-        id: updated.id,
-        username: updated.username,
-        displayName: updated.display_name,
-        bio: updated.bio,
-        avatarUrl: updated.avatar_url,
-        bannerUrl: updated.banner_url,
-      },
+      profile,
     });
   } catch (err: any) {
     return c.json({ success: false, error: err.message || "Error al actualizar perfil" }, 500);
@@ -635,7 +683,7 @@ app.get("/api/profiles/search", async (c) => {
 
     const p = getPool();
     const res = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
        FROM public.profiles
        WHERE lower(username) LIKE $1 OR lower(display_name) LIKE $1
        ORDER BY
@@ -656,6 +704,7 @@ app.get("/api/profiles/search", async (c) => {
       bio: row.bio,
       avatarUrl: row.avatar_url,
       bannerUrl: row.banner_url,
+      isPrivate: Boolean(row.is_private),
     }));
 
     return c.json({ success: true, results });
@@ -669,7 +718,7 @@ app.get("/api/profiles/suggested", async (c) => {
   try {
     const p = getPool();
     const res = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
        FROM public.profiles
        ORDER BY updated_at DESC NULLS LAST, created_at DESC
        LIMIT 10`
@@ -682,6 +731,7 @@ app.get("/api/profiles/suggested", async (c) => {
       bio: row.bio,
       avatarUrl: row.avatar_url,
       bannerUrl: row.banner_url,
+      isPrivate: Boolean(row.is_private),
     }));
 
     return c.json({ success: true, results });
@@ -694,28 +744,208 @@ app.get("/api/profiles/suggested", async (c) => {
 app.get("/api/profile/:username", async (c) => {
   try {
     const username = c.req.param("username").toLowerCase();
+    const auth = await getAuthenticatedUser(c);
     const p = getPool();
     const res = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url FROM public.profiles WHERE lower(username) = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE lower(username) = $1",
       [username]
     );
     if (res.rows.length === 0) {
       return c.json({ success: false, error: "Usuario no encontrado" }, 404);
     }
-    const row = res.rows[0];
+    const profile = await buildProfilePayload(p, res.rows[0], auth?.userId);
     return c.json({
       success: true,
-      profile: {
+      profile,
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al buscar perfil" }, 500);
+  }
+});
+
+// Follow a user (either public => accepted, or private => pending)
+app.post("/api/profile/:target/follow", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const targetParam = c.req.param("target");
+    const p = getPool();
+
+    const targetRes = await p.query(
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+       FROM public.profiles
+       WHERE id::text = $1 OR lower(username) = lower($1)
+       LIMIT 1`,
+      [targetParam]
+    );
+
+    if (targetRes.rows.length === 0) {
+      return c.json({ success: false, error: "Usuario a seguir no encontrado" }, 404);
+    }
+
+    const target = targetRes.rows[0];
+    if (target.id === auth.userId) {
+      return c.json({ success: false, error: "No puedes seguirte a ti mismo" }, 400);
+    }
+
+    const targetStatus = target.is_private ? "pending" : "accepted";
+
+    await p.query(
+      `INSERT INTO public.follows (follower_id, following_id, status, created_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (follower_id, following_id) DO UPDATE
+       SET status = EXCLUDED.status, created_at = now()`,
+      [auth.userId, target.id, targetStatus]
+    );
+
+    const profilePayload = await buildProfilePayload(p, target, auth.userId);
+    return c.json({
+      success: true,
+      status: targetStatus,
+      isFollowing: targetStatus === "accepted",
+      isPending: targetStatus === "pending",
+      profile: profilePayload,
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al seguir al usuario" }, 500);
+  }
+});
+
+// Unfollow a user or cancel follow request
+app.post("/api/profile/:target/unfollow", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const targetParam = c.req.param("target");
+    const p = getPool();
+
+    const targetRes = await p.query(
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+       FROM public.profiles
+       WHERE id::text = $1 OR lower(username) = lower($1)
+       LIMIT 1`,
+      [targetParam]
+    );
+
+    if (targetRes.rows.length === 0) {
+      return c.json({ success: false, error: "Usuario no encontrado" }, 404);
+    }
+
+    const target = targetRes.rows[0];
+
+    await p.query(
+      `DELETE FROM public.follows
+       WHERE follower_id = $1 AND following_id = $2`,
+      [auth.userId, target.id]
+    );
+
+    const profilePayload = await buildProfilePayload(p, target, auth.userId);
+    return c.json({
+      success: true,
+      status: "none",
+      isFollowing: false,
+      isPending: false,
+      profile: profilePayload,
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al dejar de seguir" }, 500);
+  }
+});
+
+// View pending follow requests for the authenticated user
+app.get("/api/profile/me/follow-requests", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    const res = await p.query(
+      `SELECT f.follower_id as id, p.username, p.display_name, p.bio, p.avatar_url, f.created_at
+       FROM public.follows f
+       INNER JOIN public.profiles p ON f.follower_id = p.id
+       WHERE f.following_id = $1 AND f.status = 'pending'
+       ORDER BY f.created_at DESC`,
+      [auth.userId]
+    );
+
+    return c.json({
+      success: true,
+      requests: res.rows.map((row) => ({
         id: row.id,
         username: row.username,
         displayName: row.display_name,
         bio: row.bio,
         avatarUrl: row.avatar_url,
-        bannerUrl: row.banner_url,
-      },
+        createdAt: row.created_at,
+      })),
     });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message || "Error al buscar perfil" }, 500);
+    return c.json({ success: false, error: err.message || "Error al obtener solicitudes" }, 500);
+  }
+});
+
+// Accept a follow request
+app.post("/api/profile/follow-requests/:followerId/accept", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const followerId = c.req.param("followerId");
+    const p = getPool();
+
+    const res = await p.query(
+      `UPDATE public.follows
+       SET status = 'accepted'
+       WHERE follower_id = $1 AND following_id = $2 AND status = 'pending'
+       RETURNING follower_id`,
+      [followerId, auth.userId]
+    );
+
+    if (res.rows.length === 0) {
+      return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
+    }
+
+    return c.json({ success: true, message: "Solicitud de seguimiento aceptada" });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al aceptar solicitud" }, 500);
+  }
+});
+
+// Reject a follow request
+app.post("/api/profile/follow-requests/:followerId/reject", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const followerId = c.req.param("followerId");
+    const p = getPool();
+
+    const res = await p.query(
+      `DELETE FROM public.follows
+       WHERE follower_id = $1 AND following_id = $2 AND status = 'pending'
+       RETURNING follower_id`,
+      [followerId, auth.userId]
+    );
+
+    if (res.rows.length === 0) {
+      return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
+    }
+
+    return c.json({ success: true, message: "Solicitud de seguimiento rechazada" });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al rechazar solicitud" }, 500);
   }
 });
 

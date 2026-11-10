@@ -302,12 +302,13 @@ class AuthService {
     return _currentUser;
   }
 
-  /// Updates display name, bio description, avatar URL, and banner URL on Neon Cloud
+  /// Updates display name, bio description, avatar URL, banner URL, and privacy on Neon Cloud
   Future<AuthResponse> updateProfile({
     required String displayName,
     String? bio,
     String? avatarUrl,
     String? bannerUrl,
+    bool? isPrivate,
   }) async {
     final token = _sessionToken;
     if (token == null) {
@@ -328,6 +329,7 @@ class AuthService {
               'bio': bio?.trim(),
               'avatarUrl': avatarUrl?.trim(),
               'bannerUrl': bannerUrl?.trim(),
+              'isPrivate': ?isPrivate,
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -348,6 +350,86 @@ class AuthService {
     } catch (e) {
       return AuthResponse.failure('Error al conectar con Neon: $e');
     }
+  }
+
+  /// Follow a user on Neon (accepted if public, pending if private)
+  Future<UserProfile?> followUser(String targetIdOrUsername) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/$targetIdOrUsername/follow');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true && data['profile'] != null) {
+          return UserProfile.fromJson(data['profile'] as Map<String, dynamic>);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error following user: $e');
+    }
+    return null;
+  }
+
+  /// Unfollow a user or cancel a pending follow request
+  Future<UserProfile?> unfollowUser(String targetIdOrUsername) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/$targetIdOrUsername/unfollow');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true && data['profile'] != null) {
+          return UserProfile.fromJson(data['profile'] as Map<String, dynamic>);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error unfollowing user: $e');
+    }
+    return null;
+  }
+
+  /// Fetch full profile details for any user
+  Future<UserProfile?> fetchUserProfile(String username) async {
+    final token = _sessionToken;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/$username');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true && data['profile'] != null) {
+          return UserProfile.fromJson(data['profile'] as Map<String, dynamic>);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching user profile: $e');
+    }
+    return null;
   }
 
   /// Uploads user avatar image from device to Neon server

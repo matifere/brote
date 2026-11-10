@@ -50,6 +50,7 @@ void main() {
     expect(find.text('Cambiar foto'), findsOneWidget);
     expect(find.text('Cambiar portada'), findsOneWidget);
     expect(find.text('Editar portada'), findsOneWidget);
+    expect(find.text('Cuenta privada'), findsOneWidget);
   });
 
   testWidgets('EditProfileScreen allows editing fields and opens avatar and banner pickers', (WidgetTester tester) async {
