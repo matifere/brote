@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import '../models/post_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
+import '../widgets/post_card.dart';
 import 'auth_screen.dart';
 import 'edit_profile_screen.dart';
-import 'feed_screen.dart';
 import 'follow_requests_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -27,6 +28,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       !_isOwnProfile && _currentProfile.isPrivate && !_currentProfile.isFollowing;
 
   bool _isFollowLoading = false;
+  List<PostItem> _userPosts = [];
+  bool _isLoadingPosts = true;
 
   Future<void> _handleFollowToggle() async {
     setState(() => _isFollowLoading = true);
@@ -46,41 +49,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  final List<PostItem> _userPosts = [
-    PostItem(
-      id: 'p1',
-      authorName: '', // will populate with widget.profile
-      authorUsername: '',
-      isVerified: true,
-      timeAgo: 'hace 2 días',
-      text:
-          'Probando la cámara nueva por el centro de la ciudad. El rango dinámico que tiene es una locura total 📸🔥 Dejen sus opiniones en los comentarios.\n\n#Fotografia #Urbano #Estilo #Street',
-      imageUrl: 'https://images.unsplash.com/photo-1514565131-fce0801e5785?auto=format&fit=crop&w=1200&q=80',
-      likesCount: 342,
-      commentsCount: 28,
-      repostsCount: 14,
-      isLiked: true,
-    ),
-    PostItem(
-      id: 'p2',
-      authorName: '',
-      authorUsername: '',
-      isVerified: true,
-      timeAgo: 'hace 5 días',
-      text:
-          '¡Bienvenidos a mi perfil en Brote! Síganme para ver más fotos, proyectos y contenido todos los días ✌️ Les dejo un abrazo enorme.',
-      likesCount: 512,
-      commentsCount: 46,
-      repostsCount: 22,
-      isLiked: false,
-    ),
-  ];
+  Future<void> _fetchUserPosts() async {
+    final posts = await AuthService().getUserPosts(_currentProfile.username);
+    if (mounted) {
+      setState(() {
+        _userPosts = posts;
+        _isLoadingPosts = false;
+      });
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     final isMe = AuthService().currentUser?.id == widget.profile.id;
     _currentProfile = isMe ? (AuthService().currentUser ?? widget.profile) : widget.profile;
+    AuthService().postsRefreshNotifier.addListener(_fetchUserPosts);
+    _fetchUserPosts();
+
     if (isMe) {
       AuthService().currentUserNotifier.addListener(_onProfileChanged);
       AuthService().fetchMyProfile();
@@ -95,6 +81,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   void dispose() {
+    AuthService().postsRefreshNotifier.removeListener(_fetchUserPosts);
     AuthService().currentUserNotifier.removeListener(_onProfileChanged);
     super.dispose();
   }
@@ -512,162 +499,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildPostsStream(ColorScheme colorScheme, TextTheme textTheme) {
-    if (_userPosts.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.notes_rounded, size: 48, color: colorScheme.outline),
-              const SizedBox(height: 12),
-              Text(
-                'Aún no hay publicaciones',
-                style: textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Las publicaciones que comparta este perfil aparecerán acá.',
-                textAlign: TextAlign.center,
-                style: textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+    if (_isLoadingPosts && _userPosts.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
     }
 
-    return ListView.separated(
-      padding: EdgeInsets.zero,
-      itemCount: _userPosts.length,
-      separatorBuilder: (_, _) => Divider(
-        height: 1,
-        color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-      ),
-      itemBuilder: (context, index) {
-        final post = _userPosts[index];
-        final authorName = _currentProfile.displayName;
-        final authorUsername = _currentProfile.username;
-        final authorAvatar = _currentProfile.avatarUrl;
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: colorScheme.primaryContainer,
-                backgroundImage: (authorAvatar != null && authorAvatar.isNotEmpty)
-                    ? NetworkImage(authorAvatar)
-                    : null,
-                onBackgroundImageError: (authorAvatar != null && authorAvatar.isNotEmpty)
-                    ? (exception, stackTrace) {}
-                    : null,
-                child: (authorAvatar == null || authorAvatar.isEmpty)
-                    ? Text(
-                        authorName.isNotEmpty ? authorName[0].toUpperCase() : '?',
-                        style: TextStyle(
-                          color: colorScheme.onPrimaryContainer,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
+    if (_userPosts.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _fetchUserPosts,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Row(
-                      children: [
-                        Text(
-                          authorName,
-                          style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 4),
-                        Icon(Icons.verified_rounded, size: 14, color: colorScheme.primary),
-                        const SizedBox(width: 6),
-                        Text(
-                          '@$authorUsername',
-                          style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '· ${post.timeAgo}',
-                          style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
-                      ],
+                    Icon(Icons.notes_rounded, size: 48, color: colorScheme.outline),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Aún no hay publicaciones',
+                      style: textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      post.text,
+                      'Las publicaciones que comparta este perfil aparecerán acá.',
+                      textAlign: TextAlign.center,
                       style: textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onSurface,
-                        height: 1.45,
+                        color: colorScheme.onSurfaceVariant,
                       ),
-                    ),
-                    if (post.imageUrl != null) ...[
-                      const SizedBox(height: 12),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          post.imageUrl!,
-                          height: 170,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => const SizedBox(),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.chat_bubble_outline_rounded,
-                                size: 17, color: colorScheme.onSurfaceVariant),
-                            const SizedBox(width: 4),
-                            Text('${post.commentsCount}', style: const TextStyle(fontSize: 12)),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            Icon(Icons.repeat_rounded, size: 17, color: colorScheme.onSurfaceVariant),
-                            const SizedBox(width: 4),
-                            Text('${post.repostsCount}', style: const TextStyle(fontSize: 12)),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            Icon(
-                              post.isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                              size: 17,
-                              color: post.isLiked
-                                  ? colorScheme.tertiaryContainer
-                                  : colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 4),
-                            Text('${post.likesCount}', style: const TextStyle(fontSize: 12)),
-                          ],
-                        ),
-                        Icon(Icons.bookmark_border_rounded,
-                            size: 17, color: colorScheme.onSurfaceVariant),
-                      ],
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
-        );
-      },
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _fetchUserPosts,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.zero,
+        itemCount: _userPosts.length,
+        separatorBuilder: (_, _) => Divider(
+          height: 1,
+          color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+        ),
+        itemBuilder: (context, index) {
+          final post = _userPosts[index];
+          return PostCard(
+            post: post,
+            onAuthorTap: () {},
+          );
+        },
+      ),
     );
   }
 

@@ -979,4 +979,362 @@ app.post("/api/profile/follow-requests/:followerId/reject", async (c) => {
   }
 });
 
+// ==========================================
+// PUBLICATIONS / POSTS ENDPOINTS
+// ==========================================
+
+// Upload post image to Neon Object Storage
+app.post("/api/posts/upload-image", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    let fileBuffer: Buffer | null = null;
+    let contentType = "image/jpeg";
+    let fileExt = "jpg";
+    const reqContentType = c.req.header("content-type") || "";
+
+    if (reqContentType.includes("multipart/form-data")) {
+      const body = await c.req.parseBody();
+      const file = body["file"] || body["image"];
+      if (file && typeof file === "object" && "arrayBuffer" in file) {
+        const ab = await (file as any).arrayBuffer();
+        fileBuffer = Buffer.from(ab);
+        contentType = (file as any).type || "image/jpeg";
+      }
+    } else if (reqContentType.includes("application/json")) {
+      const body = await c.req.json();
+      if (body.image) {
+        const raw = body.image.replace(/^data:image\/\w+;base64,/, "");
+        fileBuffer = Buffer.from(raw, "base64");
+        contentType = body.mimeType || "image/jpeg";
+      }
+    } else if (reqContentType.startsWith("image/")) {
+      const ab = await c.req.arrayBuffer();
+      fileBuffer = Buffer.from(ab);
+      contentType = reqContentType;
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return c.json({ success: false, error: "No se recibió ninguna imagen válida." }, 400);
+    }
+
+    if (contentType.includes("png")) fileExt = "png";
+    else if (contentType.includes("webp")) fileExt = "webp";
+    else if (contentType.includes("gif")) fileExt = "gif";
+    else fileExt = "jpg";
+
+    const objectKey = `post-${auth.userId}-${Date.now()}.${fileExt}`;
+    const s3 = getS3();
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "posts",
+        Key: objectKey,
+        Body: fileBuffer,
+        ContentType: contentType,
+      })
+    );
+
+    const host = c.req.header("host") || "br-spring-base-betng0ba-api.compute.c-9.us-east-2.aws.neon.tech";
+    const proto = host.includes("localhost") ? "http" : "https";
+    const imageUrl = `${proto}://${host}/api/posts/media/${objectKey}`;
+
+    return c.json({
+      success: true,
+      imageUrl,
+    });
+  } catch (err: any) {
+    console.error("Post image upload error:", err);
+    return c.json({ success: false, error: err.message || "Error al subir imagen" }, 500);
+  }
+});
+
+// Serve post media from Neon Object Storage
+app.get("/api/posts/media/:key", async (c) => {
+  try {
+    const key = c.req.param("key");
+    const s3 = getS3();
+    const res = await s3.send(
+      new GetObjectCommand({
+        Bucket: "posts",
+        Key: key,
+      })
+    );
+
+    let contentType = res.ContentType || "image/jpeg";
+    if (key.endsWith(".png")) contentType = "image/png";
+    else if (key.endsWith(".webp")) contentType = "image/webp";
+    else if (key.endsWith(".gif")) contentType = "image/gif";
+
+    const stream = res.Body as any;
+    return new Response(stream, {
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=31536000, immutable",
+      },
+    });
+  } catch (err: any) {
+    return c.text("Imagen no encontrada", 404);
+  }
+});
+
+// Create a publication (text, markdown, image or text with image)
+app.post("/api/posts", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const content = typeof body.content === "string" ? body.content.trim() : "";
+    const imageUrl = typeof body.imageUrl === "string" && body.imageUrl.trim().length > 0 ? body.imageUrl.trim() : null;
+
+    if (!content && !imageUrl) {
+      return c.json({ success: false, error: "La publicación debe tener texto o una imagen." }, 400);
+    }
+
+    const p = getPool();
+    const insertRes = await p.query(
+      `INSERT INTO public.posts (author_id, content, image_url, visibility, created_at, updated_at)
+       VALUES ($1, $2, $3, 'public', now(), now())
+       RETURNING id, author_id, content, image_url, likes_count, comments_count, created_at`,
+      [auth.userId, content || null, imageUrl]
+    );
+
+    const postRow = insertRes.rows[0];
+
+    // If imageUrl exists, also populate post_media for relational consistency
+    if (imageUrl) {
+      await p.query(
+        `INSERT INTO public.post_media (post_id, media_type, media_url, order_index, created_at)
+         VALUES ($1, 'image', $2, 0, now())`,
+        [postRow.id, imageUrl]
+      );
+    }
+
+    // Fetch author profile
+    const authorRes = await p.query(
+      "SELECT id, username, display_name, avatar_url, is_private FROM public.profiles WHERE id = $1",
+      [auth.userId]
+    );
+    const author = authorRes.rows[0];
+
+    return c.json({
+      success: true,
+      post: {
+        id: postRow.id,
+        authorId: postRow.author_id,
+        authorName: author?.display_name || author?.username || "Usuario",
+        authorUsername: author?.username || "usuario",
+        authorAvatarUrl: author?.avatar_url,
+        isVerified: true,
+        content: postRow.content || "",
+        imageUrl: postRow.image_url,
+        likesCount: postRow.likes_count || 0,
+        commentsCount: postRow.comments_count || 0,
+        repostsCount: 0,
+        isLiked: false,
+        createdAt: postRow.created_at,
+      },
+    });
+  } catch (err: any) {
+    console.error("Create post error:", err);
+    return c.json({ success: false, error: err.message || "Error al crear publicación" }, 500);
+  }
+});
+
+// Helper for formatting post rows
+function mapPostRow(row: any) {
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    authorName: row.author_name || row.author_username || "Usuario",
+    authorUsername: row.author_username || "usuario",
+    authorAvatarUrl: row.author_avatar_url,
+    isVerified: true,
+    content: row.content || "",
+    imageUrl: row.image_url || null,
+    likesCount: Number(row.likes_count || 0),
+    commentsCount: Number(row.comments_count || 0),
+    repostsCount: 0,
+    isLiked: Boolean(row.is_liked),
+    createdAt: row.created_at,
+  };
+}
+
+// Get feed posts (public accounts + followed private accounts)
+app.get("/api/posts/feed", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    const viewerId = auth?.userId || null;
+    const p = getPool();
+
+    const sql = `
+      SELECT
+        p.id,
+        p.author_id,
+        p.content,
+        COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+        p.likes_count,
+        p.comments_count,
+        p.created_at,
+        pr.username as author_username,
+        pr.display_name as author_name,
+        pr.avatar_url as author_avatar_url,
+        pr.is_private as author_is_private,
+        ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid)) as is_liked
+      FROM public.posts p
+      INNER JOIN public.profiles pr ON p.author_id = pr.id
+      WHERE
+        pr.is_private = false
+        OR ($1::uuid IS NOT NULL AND (
+             p.author_id = $1::uuid
+             OR EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')
+           ))
+      ORDER BY p.created_at DESC
+      LIMIT 50;
+    `;
+
+    const res = await p.query(sql, [viewerId]);
+    return c.json({
+      success: true,
+      posts: res.rows.map(mapPostRow),
+    });
+  } catch (err: any) {
+    console.error("Feed error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener el feed" }, 500);
+  }
+});
+
+// Get posts for a specific user profile
+app.get("/api/posts/user/:target", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    const viewerId = auth?.userId || null;
+    const target = c.req.param("target");
+    const p = getPool();
+
+    const profileRes = await p.query(
+      `SELECT id, username, display_name, avatar_url, is_private
+       FROM public.profiles
+       WHERE id::text = $1 OR lower(username) = lower($1)
+       LIMIT 1`,
+      [target]
+    );
+
+    if (profileRes.rows.length === 0) {
+      return c.json({ success: false, error: "Perfil no encontrado" }, 404);
+    }
+
+    const profile = profileRes.rows[0];
+    const isOwner = viewerId && viewerId === profile.id;
+
+    if (profile.is_private && !isOwner) {
+      let isFollower = false;
+      if (viewerId) {
+        const followRes = await p.query(
+          `SELECT 1 FROM public.follows WHERE follower_id = $1 AND following_id = $2 AND status = 'accepted'`,
+          [viewerId, profile.id]
+        );
+        isFollower = followRes.rows.length > 0;
+      }
+      if (!isFollower) {
+        return c.json({
+          success: true,
+          locked: true,
+          posts: [],
+        });
+      }
+    }
+
+    const sql = `
+      SELECT
+        p.id,
+        p.author_id,
+        p.content,
+        COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+        p.likes_count,
+        p.comments_count,
+        p.created_at,
+        pr.username as author_username,
+        pr.display_name as author_name,
+        pr.avatar_url as author_avatar_url,
+        pr.is_private as author_is_private,
+        ($2::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $2::uuid)) as is_liked
+      FROM public.posts p
+      INNER JOIN public.profiles pr ON p.author_id = pr.id
+      WHERE p.author_id = $1
+      ORDER BY p.created_at DESC
+      LIMIT 50;
+    `;
+
+    const postsRes = await p.query(sql, [profile.id, viewerId]);
+    return c.json({
+      success: true,
+      locked: false,
+      posts: postsRes.rows.map(mapPostRow),
+    });
+  } catch (err: any) {
+    console.error("User posts error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener publicaciones" }, 500);
+  }
+});
+
+// Toggle like on a post
+app.post("/api/posts/:id/like", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const postId = c.req.param("id");
+    const p = getPool();
+
+    const likeCheck = await p.query(
+      "SELECT 1 FROM public.post_likes WHERE post_id = $1 AND user_id = $2",
+      [postId, auth.userId]
+    );
+
+    let isLiked = false;
+    if (likeCheck.rows.length > 0) {
+      await p.query(
+        "DELETE FROM public.post_likes WHERE post_id = $1 AND user_id = $2",
+        [postId, auth.userId]
+      );
+      await p.query(
+        "UPDATE public.posts SET likes_count = GREATEST(0, likes_count - 1), updated_at = now() WHERE id = $1",
+        [postId]
+      );
+      isLiked = false;
+    } else {
+      await p.query(
+        "INSERT INTO public.post_likes (post_id, user_id, created_at) VALUES ($1, $2, now())",
+        [postId, auth.userId]
+      );
+      await p.query(
+        "UPDATE public.posts SET likes_count = likes_count + 1, updated_at = now() WHERE id = $1",
+        [postId]
+      );
+      isLiked = true;
+    }
+
+    const countRes = await p.query("SELECT likes_count FROM public.posts WHERE id = $1", [postId]);
+    const likesCount = countRes.rows[0]?.likes_count ?? 0;
+
+    return c.json({
+      success: true,
+      isLiked,
+      likesCount,
+    });
+  } catch (err: any) {
+    console.error("Like toggle error:", err);
+    return c.json({ success: false, error: err.message || "Error al dar me gusta" }, 500);
+  }
+});
+
 export default app;

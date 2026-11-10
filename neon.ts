@@ -15,6 +15,7 @@ export default defineConfig({
     assets: { access: "private" },
     avatars: { access: "public_read" },
     banners: { access: "public_read" },
+    posts: { access: "public_read" },
   },
   // Branch policy: per-branch tuning
   branch: (branch) => {

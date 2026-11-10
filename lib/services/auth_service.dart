@@ -3,6 +3,7 @@ import 'dart:io' show File, Platform;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/post_item.dart';
 import '../models/user_profile.dart';
 
 class SessionStorage {
@@ -107,6 +108,7 @@ class AuthService {
   String? _sessionToken;
   UserProfile? _currentUser;
   final ValueNotifier<UserProfile?> currentUserNotifier = ValueNotifier<UserProfile?>(null);
+  final ValueNotifier<int> postsRefreshNotifier = ValueNotifier<int>(0);
 
   String? get sessionToken => _sessionToken;
   UserProfile? get currentUser => _currentUser;
@@ -664,6 +666,154 @@ class AuthService {
       debugPrint('Error fetching suggested profiles: $e');
     }
     return [];
+  }
+
+  /// Uploads post image from device to Neon Object Storage
+  Future<String?> uploadPostImage(
+    List<int> imageBytes, {
+    String filename = 'post.jpg',
+  }) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/upload-image');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..files.add(http.MultipartFile.fromBytes(
+          'file',
+          imageBytes,
+          filename: filename,
+        ));
+
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamedResponse);
+      final Map<String, dynamic> data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data['imageUrl'] as String?;
+      }
+    } catch (e) {
+      debugPrint('Error uploading post image: $e');
+    }
+    return null;
+  }
+
+  /// Creates a new publication (plain text, markdown, image or text with image)
+  Future<PostItem?> createPost({
+    String? content,
+    String? imageUrl,
+  }) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'content': content?.trim(),
+          'imageUrl': imageUrl?.trim(),
+        }),
+      ).timeout(const Duration(seconds: 15));
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true && data['post'] != null) {
+        postsRefreshNotifier.value++;
+        return PostItem.fromJson(data['post'] as Map<String, dynamic>);
+      }
+    } catch (e) {
+      debugPrint('Error creating post: $e');
+    }
+    return null;
+  }
+
+  /// Fetches feed posts from Neon
+  Future<List<PostItem>> getFeedPosts() async {
+    final token = _sessionToken;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/feed');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['posts'] is List) {
+          final list = data['posts'] as List;
+          return list.map((item) => PostItem.fromJson(item as Map<String, dynamic>)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching feed posts: $e');
+    }
+    return [];
+  }
+
+  /// Fetches posts for a specific user
+  Future<List<PostItem>> getUserPosts(String usernameOrId) async {
+    final token = _sessionToken;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/user/$usernameOrId');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['posts'] is List) {
+          final list = data['posts'] as List;
+          return list.map((item) => PostItem.fromJson(item as Map<String, dynamic>)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching user posts: $e');
+    }
+    return [];
+  }
+
+  /// Toggles like on a post
+  Future<Map<String, dynamic>?> toggleLikePost(String postId) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/$postId/like');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          return {
+            'isLiked': data['isLiked'] as bool? ?? false,
+            'likesCount': (data['likesCount'] as num? ?? 0).toInt(),
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('Error toggling like: $e');
+    }
+    return null;
   }
 
   /// Logout user and clear stored credentials on device

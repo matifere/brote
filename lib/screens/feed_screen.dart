@@ -1,40 +1,10 @@
 import 'package:flutter/material.dart';
+import '../models/post_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
+import '../widgets/post_card.dart';
 import 'follow_requests_screen.dart';
-
-class PostItem {
-  final String id;
-  final String authorName;
-  final String authorUsername;
-  final String? authorAvatarUrl;
-  final bool isVerified;
-  final String timeAgo;
-  final String text;
-  final String? imageUrl;
-  int likesCount;
-  int commentsCount;
-  int repostsCount;
-  bool isLiked;
-  bool isBookmarked;
-
-  PostItem({
-    required this.id,
-    required this.authorName,
-    required this.authorUsername,
-    this.authorAvatarUrl,
-    this.isVerified = false,
-    required this.timeAgo,
-    required this.text,
-    this.imageUrl,
-    this.likesCount = 0,
-    this.commentsCount = 0,
-    this.repostsCount = 0,
-    this.isLiked = false,
-    this.isBookmarked = false,
-  });
-}
 
 class FeedScreen extends StatefulWidget {
   final UserProfile profile;
@@ -52,71 +22,32 @@ class FeedScreen extends StatefulWidget {
 
 class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-
-  final List<PostItem> _posts = [
-    PostItem(
-      id: '1',
-      authorName: 'Elena Rostova',
-      authorUsername: 'elena_dev',
-      isVerified: true,
-      timeAgo: '22m',
-      text:
-          'Lanzamos oficialmente la nueva versión de nuestra plataforma 🚀 Más de 50.000 usuarios conectados en las primeras horas. Gracias a toda la comunidad por el apoyo tremendo.\n\n¿Qué función les gustaría ver primero en el próximo update?\n\n#Tech #Startup #Innovacion',
-      imageUrl: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=1200&q=80',
-      likesCount: 1420,
-      commentsCount: 184,
-      repostsCount: 96,
-      isLiked: true,
-    ),
-    PostItem(
-      id: '2',
-      authorName: 'Martín Morales',
-      authorUsername: 'morales_builds',
-      isVerified: true,
-      timeAgo: '1h',
-      text:
-          '¿Alguien más manija con la temporada de recitales y festivales que se viene? 🔥 Ya tengo las entradas listas para el finde. Dejen recomendaciones de canciones para armar la playlist del viaje 👇🎧\n\n#MusicaEnVivo #Festivales #FinDeSemana',
-      likesCount: 890,
-      commentsCount: 142,
-      repostsCount: 65,
-    ),
-    PostItem(
-      id: '3',
-      authorName: 'Camila Varela',
-      authorUsername: 'camilav',
-      isVerified: false,
-      timeAgo: '3h',
-      text:
-          'Golden hour en la ciudad 🌇 Pocas cosas le ganan a la luz de este atardecer. Capturada con lente fija de 35mm, directo de cámara sin filtros.\n\n#Fotografia #Atardecer #UrbanStyle #CityLife',
-      imageUrl: 'https://images.unsplash.com/photo-1514565131-fce0801e5785?auto=format&fit=crop&w=1200&q=80',
-      likesCount: 2340,
-      commentsCount: 215,
-      repostsCount: 178,
-    ),
-    PostItem(
-      id: '4',
-      authorName: 'Lucas Albarracín',
-      authorUsername: 'lucas_tech',
-      isVerified: true,
-      timeAgo: '5h',
-      text:
-          'Hoy 21:00hs prendemos directo en stream para probar los lanzamientos más esperados del año y debatir con ustedes en el chat 🎮 Traigan algo para tomar y nos vemos ahí.\n\n#Gaming #Stream #EnVivo #Comunidad',
-      likesCount: 640,
-      commentsCount: 88,
-      repostsCount: 52,
-    ),
-  ];
+  List<PostItem> _posts = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    AuthService().postsRefreshNotifier.addListener(_loadPosts);
+    _loadPosts();
   }
 
   @override
   void dispose() {
+    AuthService().postsRefreshNotifier.removeListener(_loadPosts);
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPosts() async {
+    final posts = await AuthService().getFeedPosts();
+    if (mounted) {
+      setState(() {
+        _posts = posts;
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -226,185 +157,95 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
         controller: _tabController,
         children: [
           _buildPostsList(colorScheme, textTheme),
-          _buildFollowingEmptyState(colorScheme, textTheme),
+          _buildFollowingPostsList(colorScheme, textTheme),
         ],
       ),
     );
   }
 
   Widget _buildPostsList(ColorScheme colorScheme, TextTheme textTheme) {
-    return ListView.separated(
-      itemCount: _posts.length,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      separatorBuilder: (_, _) => Divider(
-        height: 1,
-        color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-      ),
-      itemBuilder: (context, index) {
-        final post = _posts[index];
-        return _buildPostCard(post, colorScheme, textTheme);
-      },
-    );
-  }
+    if (_isLoading && _posts.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-  Widget _buildPostCard(PostItem post, ColorScheme colorScheme, TextTheme textTheme) {
-    return Container(
-      color: colorScheme.surface,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: colorScheme.surfaceContainerHighest,
-            child: Text(
-              post.authorName.isNotEmpty ? post.authorName[0].toUpperCase() : '?',
-              style: TextStyle(
-                color: colorScheme.primary,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header (Name, Verified badge, Username, Time)
-                Row(
-                  children: [
-                    Text(
-                      post.authorName,
-                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                    ),
-                    if (post.isVerified) ...[
-                      const SizedBox(width: 4),
-                      Icon(Icons.verified_rounded, size: 15, color: colorScheme.primary),
-                    ],
-                    const SizedBox(width: 6),
-                    Text(
-                      '@${post.authorUsername}',
-                      style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '· ${post.timeAgo}',
-                      style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-
-                // Post Content Text
-                Text(
-                  post.text,
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurface,
-                    height: 1.45,
-                  ),
-                ),
-
-                // Optional Image
-                if (post.imageUrl != null) ...[
-                  const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
-                      post.imageUrl!,
-                      height: 190,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        height: 160,
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainer,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Center(
-                          child: Icon(Icons.image_not_supported_outlined, color: colorScheme.outline),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-
-                const SizedBox(height: 12),
-
-                // Post Actions Bar (Comments, Reposts, Likes, Bookmark)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    // Comments
-                    _buildActionButton(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      label: post.commentsCount > 0 ? '${post.commentsCount}' : '',
-                      color: colorScheme.onSurfaceVariant,
-                      onTap: () {},
-                    ),
-                    // Repost
-                    _buildActionButton(
-                      icon: Icons.repeat_rounded,
-                      label: post.repostsCount > 0 ? '${post.repostsCount}' : '',
-                      color: colorScheme.onSurfaceVariant,
-                      onTap: () {
-                        setState(() => post.repostsCount++);
-                      },
-                    ),
-                    // Like
-                    _buildActionButton(
-                      icon: post.isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                      label: post.likesCount > 0 ? '${post.likesCount}' : '',
-                      color: post.isLiked ? colorScheme.tertiaryContainer : colorScheme.onSurfaceVariant,
-                      onTap: () {
-                        setState(() {
-                          post.isLiked = !post.isLiked;
-                          post.likesCount += post.isLiked ? 1 : -1;
-                        });
-                      },
-                    ),
-                    // Bookmark
-                    _buildActionButton(
-                      icon: post.isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-                      label: '',
-                      color: post.isBookmarked ? colorScheme.primary : colorScheme.onSurfaceVariant,
-                      onTap: () {
-                        setState(() => post.isBookmarked = !post.isBookmarked);
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+    if (_posts.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _loadPosts,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           children: [
-            Icon(icon, size: 18, color: color),
-            if (label.isNotEmpty) ...[
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600),
+            SizedBox(height: MediaQuery.of(context).size.height * 0.2),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.dynamic_feed_rounded, size: 54, color: colorScheme.primary),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No hay publicaciones aún',
+                      style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Sé el primero en compartir algo o seguí a más personas para ver sus publicaciones acá.',
+                      textAlign: TextAlign.center,
+                      style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ],
         ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadPosts,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: _posts.length,
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        separatorBuilder: (_, _) => Divider(
+          height: 1,
+          color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+        ),
+        itemBuilder: (context, index) {
+          final post = _posts[index];
+          return PostCard(post: post);
+        },
+      ),
+    );
+  }
+
+  Widget _buildFollowingPostsList(ColorScheme colorScheme, TextTheme textTheme) {
+    if (_isLoading && _posts.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final currentUserId = AuthService().currentUser?.id;
+    final followingPosts = _posts.where((p) => p.authorId != currentUserId).toList();
+
+    if (followingPosts.isEmpty) {
+      return _buildFollowingEmptyState(colorScheme, textTheme);
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadPosts,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: followingPosts.length,
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        separatorBuilder: (_, _) => Divider(
+          height: 1,
+          color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+        ),
+        itemBuilder: (context, index) {
+          final post = followingPosts[index];
+          return PostCard(post: post);
+        },
       ),
     );
   }
