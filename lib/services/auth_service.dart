@@ -432,6 +432,115 @@ class AuthService {
     return null;
   }
 
+  /// Get pending follow requests for the authenticated user
+  Future<List<FollowRequest>> getFollowRequests() async {
+    final token = _sessionToken;
+    if (token == null) return [];
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/me/follow-requests');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true && data['requests'] is List) {
+          final list = (data['requests'] as List)
+              .map((item) => FollowRequest.fromJson(item as Map<String, dynamic>))
+              .toList();
+          if (_currentUser != null && _currentUser!.pendingRequestsCount != list.length) {
+            _currentUser = _currentUser!.copyWith(pendingRequestsCount: list.length);
+            currentUserNotifier.value = _currentUser;
+          }
+          return list;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching follow requests: $e');
+    }
+    return [];
+  }
+
+  /// Accept a follow request
+  Future<bool> acceptFollowRequest(String followerId) async {
+    final token = _sessionToken;
+    if (token == null) return false;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/follow-requests/$followerId/accept');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          if (data['profile'] != null) {
+            _currentUser = UserProfile.fromJson(data['profile'] as Map<String, dynamic>);
+          } else if (_currentUser != null) {
+            _currentUser = _currentUser!.copyWith(
+              followersCount: _currentUser!.followersCount + 1,
+              pendingRequestsCount: (_currentUser!.pendingRequestsCount > 0)
+                  ? _currentUser!.pendingRequestsCount - 1
+                  : 0,
+            );
+          }
+          currentUserNotifier.value = _currentUser;
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error accepting follow request: $e');
+    }
+    return false;
+  }
+
+  /// Reject a follow request
+  Future<bool> rejectFollowRequest(String followerId) async {
+    final token = _sessionToken;
+    if (token == null) return false;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/follow-requests/$followerId/reject');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          if (data['profile'] != null) {
+            _currentUser = UserProfile.fromJson(data['profile'] as Map<String, dynamic>);
+          } else if (_currentUser != null) {
+            _currentUser = _currentUser!.copyWith(
+              pendingRequestsCount: (_currentUser!.pendingRequestsCount > 0)
+                  ? _currentUser!.pendingRequestsCount - 1
+                  : 0,
+            );
+          }
+          currentUserNotifier.value = _currentUser;
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error rejecting follow request: $e');
+    }
+    return false;
+  }
+
   /// Uploads user avatar image from device to Neon server
   Future<AuthResponse> uploadAvatar(
     List<int> imageBytes, {

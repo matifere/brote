@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
+import 'follow_requests_screen.dart';
 
 class PostItem {
   final String id;
@@ -273,12 +274,22 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'Notificaciones',
-            icon: Icon(Icons.notifications_outlined, color: colorScheme.onSurfaceVariant),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('No hay notificaciones nuevas.')),
+          ValueListenableBuilder<UserProfile?>(
+            valueListenable: AuthService().currentUserNotifier,
+            builder: (context, user, _) {
+              final pending = user?.pendingRequestsCount ?? 0;
+              return IconButton(
+                tooltip: 'Notificaciones y solicitudes',
+                icon: Badge(
+                  isLabelVisible: pending > 0,
+                  label: Text('$pending'),
+                  child: Icon(Icons.notifications_outlined, color: colorScheme.onSurfaceVariant),
+                ),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const FollowRequestsScreen()),
+                  );
+                },
               );
             },
           ),

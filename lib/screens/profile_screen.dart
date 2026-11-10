@@ -5,6 +5,7 @@ import '../widgets/brote_logo.dart';
 import 'auth_screen.dart';
 import 'edit_profile_screen.dart';
 import 'feed_screen.dart';
+import 'follow_requests_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final UserProfile profile;
@@ -207,6 +208,21 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     );
                   },
                 ),
+                if (_isOwnProfile && (_currentProfile.isPrivate || _currentProfile.pendingRequestsCount > 0))
+                  IconButton(
+                    tooltip: 'Solicitudes de seguimiento',
+                    icon: Badge(
+                      isLabelVisible: _currentProfile.pendingRequestsCount > 0,
+                      label: Text('${_currentProfile.pendingRequestsCount}'),
+                      child: const Icon(Icons.group_add_outlined),
+                    ),
+                    onPressed: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const FollowRequestsScreen()),
+                      );
+                      AuthService().fetchMyProfile();
+                    },
+                  ),
                 if (_isOwnProfile)
                   IconButton(
                     tooltip: 'Cerrar sesión',
@@ -421,6 +437,12 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                       ],
                     ),
                     const SizedBox(height: 16),
+
+                    // Follow Requests Banner if private or has pending requests
+                    if (_isOwnProfile && (_currentProfile.isPrivate || _currentProfile.pendingRequestsCount > 0)) ...[
+                      _buildFollowRequestsBanner(colorScheme, textTheme),
+                      const SizedBox(height: 16),
+                    ],
                   ],
                 ),
               ),
@@ -656,6 +678,102 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           message,
           textAlign: TextAlign.center,
           style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFollowRequestsBanner(ColorScheme colorScheme, TextTheme textTheme) {
+    final count = _currentProfile.pendingRequestsCount;
+    final hasRequests = count > 0;
+
+    return Material(
+      color: hasRequests
+          ? colorScheme.primaryContainer.withValues(alpha: 0.3)
+          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: hasRequests
+              ? colorScheme.primary.withValues(alpha: 0.45)
+              : colorScheme.outlineVariant.withValues(alpha: 0.3),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const FollowRequestsScreen()),
+          );
+          AuthService().fetchMyProfile();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: hasRequests ? colorScheme.primary : colorScheme.surfaceContainerHighest,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.group_add_rounded,
+                  size: 20,
+                  color: hasRequests ? colorScheme.onPrimary : colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Solicitudes de seguimiento',
+                          style: textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (hasRequests) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '$count',
+                              style: TextStyle(
+                                color: colorScheme.onPrimary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      hasRequests
+                          ? '$count ${count == 1 ? "persona quiere" : "personas quieren"} seguirte'
+                          : 'Revisá las solicitudes pendientes de tu cuenta',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
         ),
       ),
     );

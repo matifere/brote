@@ -9,6 +9,7 @@ class UserProfile {
   final bool isPrivate;
   final int followersCount;
   final int followingCount;
+  final int pendingRequestsCount;
   final String followStatus; // 'none', 'pending', 'accepted'
   final bool isFollowedBy;
   final bool canViewContent;
@@ -24,6 +25,7 @@ class UserProfile {
     this.isPrivate = false,
     this.followersCount = 0,
     this.followingCount = 0,
+    this.pendingRequestsCount = 0,
     this.followStatus = 'none',
     this.isFollowedBy = false,
     this.canViewContent = true,
@@ -44,6 +46,7 @@ class UserProfile {
       isPrivate: json['isPrivate'] as bool? ?? json['is_private'] as bool? ?? false,
       followersCount: (json['followersCount'] as num? ?? json['followers_count'] as num? ?? 0).toInt(),
       followingCount: (json['followingCount'] as num? ?? json['following_count'] as num? ?? 0).toInt(),
+      pendingRequestsCount: (json['pendingRequestsCount'] as num? ?? json['pending_requests_count'] as num? ?? 0).toInt(),
       followStatus: json['followStatus'] as String? ?? json['follow_status'] as String? ?? 'none',
       isFollowedBy: json['isFollowedBy'] as bool? ?? json['is_followed_by'] as bool? ?? false,
       canViewContent: json['canViewContent'] as bool? ?? json['can_view_content'] as bool? ?? true,
@@ -62,6 +65,7 @@ class UserProfile {
       'isPrivate': isPrivate,
       'followersCount': followersCount,
       'followingCount': followingCount,
+      'pendingRequestsCount': pendingRequestsCount,
       'followStatus': followStatus,
       'isFollowedBy': isFollowedBy,
       'canViewContent': canViewContent,
@@ -79,6 +83,7 @@ class UserProfile {
     bool? isPrivate,
     int? followersCount,
     int? followingCount,
+    int? pendingRequestsCount,
     String? followStatus,
     bool? isFollowedBy,
     bool? canViewContent,
@@ -94,6 +99,7 @@ class UserProfile {
       isPrivate: isPrivate ?? this.isPrivate,
       followersCount: followersCount ?? this.followersCount,
       followingCount: followingCount ?? this.followingCount,
+      pendingRequestsCount: pendingRequestsCount ?? this.pendingRequestsCount,
       followStatus: followStatus ?? this.followStatus,
       isFollowedBy: isFollowedBy ?? this.isFollowedBy,
       canViewContent: canViewContent ?? this.canViewContent,
@@ -129,6 +135,42 @@ class AuthResponse {
     return AuthResponse(
       success: false,
       error: errorMessage,
+    );
+  }
+}
+
+class FollowRequest {
+  final String id;
+  final String username;
+  final String displayName;
+  final String? bio;
+  final String? avatarUrl;
+  final DateTime? createdAt;
+
+  const FollowRequest({
+    required this.id,
+    required this.username,
+    required this.displayName,
+    this.bio,
+    this.avatarUrl,
+    this.createdAt,
+  });
+
+  factory FollowRequest.fromJson(Map<String, dynamic> json) {
+    DateTime? dt;
+    final dateStr = json['createdAt'] ?? json['created_at'];
+    if (dateStr != null) {
+      dt = DateTime.tryParse(dateStr.toString());
+    }
+    return FollowRequest(
+      id: json['id'] as String,
+      username: json['username'] as String,
+      displayName: (json['displayName'] as String?) ??
+          (json['display_name'] as String?) ??
+          (json['username'] as String),
+      bio: json['bio'] as String?,
+      avatarUrl: (json['avatarUrl'] as String?) ?? (json['avatar_url'] as String?),
+      createdAt: dt,
     );
   }
 }

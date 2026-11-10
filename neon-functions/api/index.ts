@@ -313,6 +313,15 @@ async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | 
   const isOwner = Boolean(viewerId && viewerId === profileId);
   const isPrivate = Boolean(profileRow.is_private);
 
+  let pendingRequestsCount = 0;
+  if (isOwner) {
+    const reqRes = await p.query(
+      `SELECT COUNT(*)::int as count FROM public.follows WHERE following_id = $1 AND status = 'pending'`,
+      [profileId]
+    );
+    pendingRequestsCount = reqRes.rows[0]?.count ?? 0;
+  }
+
   if (viewerId && !isOwner) {
     const relRes = await p.query(
       `SELECT
@@ -343,6 +352,7 @@ async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | 
     isPrivate,
     followersCount,
     followingCount,
+    pendingRequestsCount,
     followStatus,
     isFollowedBy,
     canViewContent,
@@ -915,7 +925,17 @@ app.post("/api/profile/follow-requests/:followerId/accept", async (c) => {
       return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
     }
 
-    return c.json({ success: true, message: "Solicitud de seguimiento aceptada" });
+    const profileRes = await p.query(
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      [auth.userId]
+    );
+    const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
+
+    return c.json({
+      success: true,
+      message: "Solicitud de seguimiento aceptada",
+      profile: updatedProfile,
+    });
   } catch (err: any) {
     return c.json({ success: false, error: err.message || "Error al aceptar solicitud" }, 500);
   }
@@ -943,7 +963,17 @@ app.post("/api/profile/follow-requests/:followerId/reject", async (c) => {
       return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
     }
 
-    return c.json({ success: true, message: "Solicitud de seguimiento rechazada" });
+    const profileRes = await p.query(
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      [auth.userId]
+    );
+    const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
+
+    return c.json({
+      success: true,
+      message: "Solicitud de seguimiento rechazada",
+      profile: updatedProfile,
+    });
   } catch (err: any) {
     return c.json({ success: false, error: err.message || "Error al rechazar solicitud" }, 500);
   }
