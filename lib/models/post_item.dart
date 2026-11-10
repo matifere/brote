@@ -13,6 +13,7 @@ class PostItem {
   int repostsCount;
   bool isLiked;
   bool isBookmarked;
+  final bool isFollowingAuthor;
 
   PostItem({
     required this.id,
@@ -29,6 +30,7 @@ class PostItem {
     this.repostsCount = 0,
     this.isLiked = false,
     this.isBookmarked = false,
+    this.isFollowingAuthor = false,
   });
 
   String get timeAgo {
@@ -68,6 +70,7 @@ class PostItem {
       repostsCount: (json['repostsCount'] as num? ?? json['reposts_count'] as num? ?? 0).toInt(),
       isLiked: json['isLiked'] as bool? ?? json['is_liked'] as bool? ?? false,
       isBookmarked: json['isBookmarked'] as bool? ?? json['is_bookmarked'] as bool? ?? false,
+      isFollowingAuthor: json['isFollowingAuthor'] as bool? ?? json['is_following_author'] as bool? ?? false,
     );
   }
 }

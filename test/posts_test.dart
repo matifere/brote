@@ -5,6 +5,7 @@ import 'package:brote/models/post_item.dart';
 import 'package:brote/models/user_profile.dart';
 import 'package:brote/widgets/post_card.dart';
 import 'package:brote/screens/create_post_screen.dart';
+import 'package:brote/screens/feed_screen.dart';
 
 void main() {
   testWidgets('PostCard renders Markdown content including code snippets', (tester) async {
@@ -67,5 +68,25 @@ void main() {
     // Verify preview is displayed with MarkdownBody
     expect(find.text('Editar'), findsOneWidget);
     expect(find.byType(MarkdownBody), findsOneWidget);
+  });
+
+  testWidgets('FeedScreen renders Para ti and Siguiendo tabs', (tester) async {
+    final testProfile = UserProfile(
+      id: 'me-1',
+      username: 'mati',
+      displayName: 'Mati',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FeedScreen(
+          profile: testProfile,
+          onOpenProfile: () {},
+        ),
+      ),
+    );
+
+    expect(find.text('Para ti'), findsOneWidget);
+    expect(find.text('Siguiendo'), findsOneWidget);
   });
 }

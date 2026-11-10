@@ -736,11 +736,12 @@ class AuthService {
   }
 
   /// Fetches feed posts from Neon
-  Future<List<PostItem>> getFeedPosts() async {
+  Future<List<PostItem>> getFeedPosts({String? filter}) async {
     final token = _sessionToken;
 
     try {
-      final uri = Uri.parse('$baseUrl/api/posts/feed');
+      final queryParam = (filter != null && filter.isNotEmpty) ? '?filter=$filter' : '';
+      final uri = Uri.parse('$baseUrl/api/posts/feed$queryParam');
       final response = await http.get(
         uri,
         headers: {

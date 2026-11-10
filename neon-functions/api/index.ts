@@ -1162,16 +1162,52 @@ function mapPostRow(row: any) {
     commentsCount: Number(row.comments_count || 0),
     repostsCount: 0,
     isLiked: Boolean(row.is_liked),
+    isFollowingAuthor: Boolean(row.is_following_author),
     createdAt: row.created_at,
   };
 }
 
-// Get feed posts (public accounts + followed private accounts)
+// Get feed posts (public accounts + followed private accounts, or exclusively followed accounts)
 app.get("/api/posts/feed", async (c) => {
   try {
     const auth = await getAuthenticatedUser(c);
     const viewerId = auth?.userId || null;
+    const filter = c.req.query("filter"); // "following" or undefined
     const p = getPool();
+
+    if (filter === "following") {
+      if (!viewerId) {
+        return c.json({ success: true, posts: [] });
+      }
+
+      const sql = `
+        SELECT
+          p.id,
+          p.author_id,
+          p.content,
+          COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+          p.likes_count,
+          p.comments_count,
+          p.created_at,
+          pr.username as author_username,
+          pr.display_name as author_name,
+          pr.avatar_url as author_avatar_url,
+          pr.is_private as author_is_private,
+          EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid) as is_liked,
+          true as is_following_author
+        FROM public.posts p
+        INNER JOIN public.profiles pr ON p.author_id = pr.id
+        INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
+        ORDER BY p.created_at DESC
+        LIMIT 50;
+      `;
+
+      const res = await p.query(sql, [viewerId]);
+      return c.json({
+        success: true,
+        posts: res.rows.map(mapPostRow),
+      });
+    }
 
     const sql = `
       SELECT
@@ -1186,7 +1222,8 @@ app.get("/api/posts/feed", async (c) => {
         pr.display_name as author_name,
         pr.avatar_url as author_avatar_url,
         pr.is_private as author_is_private,
-        ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid)) as is_liked
+        ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid)) as is_liked,
+        ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')) as is_following_author
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
       WHERE
@@ -1207,6 +1244,50 @@ app.get("/api/posts/feed", async (c) => {
   } catch (err: any) {
     console.error("Feed error:", err);
     return c.json({ success: false, error: err.message || "Error al obtener el feed" }, 500);
+  }
+});
+
+// Alias for following feed
+app.get("/api/posts/following", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    const viewerId = auth?.userId || null;
+    const p = getPool();
+
+    if (!viewerId) {
+      return c.json({ success: true, posts: [] });
+    }
+
+    const sql = `
+      SELECT
+        p.id,
+        p.author_id,
+        p.content,
+        COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+        p.likes_count,
+        p.comments_count,
+        p.created_at,
+        pr.username as author_username,
+        pr.display_name as author_name,
+        pr.avatar_url as author_avatar_url,
+        pr.is_private as author_is_private,
+        EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid) as is_liked,
+        true as is_following_author
+      FROM public.posts p
+      INNER JOIN public.profiles pr ON p.author_id = pr.id
+      INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
+      ORDER BY p.created_at DESC
+      LIMIT 50;
+    `;
+
+    const res = await p.query(sql, [viewerId]);
+    return c.json({
+      success: true,
+      posts: res.rows.map(mapPostRow),
+    });
+  } catch (err: any) {
+    console.error("Following feed error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener el feed de siguiendo" }, 500);
   }
 });
 

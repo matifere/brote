@@ -22,8 +22,10 @@ class FeedScreen extends StatefulWidget {
 
 class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  List<PostItem> _posts = [];
-  bool _isLoading = true;
+  List<PostItem> _forYouPosts = [];
+  List<PostItem> _followingPosts = [];
+  bool _isLoadingForYou = true;
+  bool _isLoadingFollowing = true;
 
   @override
   void initState() {
@@ -41,11 +43,28 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _loadPosts() async {
+    await Future.wait([
+      _loadForYou(),
+      _loadFollowing(),
+    ]);
+  }
+
+  Future<void> _loadForYou() async {
     final posts = await AuthService().getFeedPosts();
     if (mounted) {
       setState(() {
-        _posts = posts;
-        _isLoading = false;
+        _forYouPosts = posts;
+        _isLoadingForYou = false;
+      });
+    }
+  }
+
+  Future<void> _loadFollowing() async {
+    final posts = await AuthService().getFeedPosts(filter: 'following');
+    if (mounted) {
+      setState(() {
+        _followingPosts = posts;
+        _isLoadingFollowing = false;
       });
     }
   }
@@ -164,13 +183,13 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildPostsList(ColorScheme colorScheme, TextTheme textTheme) {
-    if (_isLoading && _posts.isEmpty) {
+    if (_isLoadingForYou && _forYouPosts.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_posts.isEmpty) {
+    if (_forYouPosts.isEmpty) {
       return RefreshIndicator(
-        onRefresh: _loadPosts,
+        onRefresh: _loadForYou,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: [
@@ -203,17 +222,17 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
     }
 
     return RefreshIndicator(
-      onRefresh: _loadPosts,
+      onRefresh: _loadForYou,
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: _posts.length,
+        itemCount: _forYouPosts.length,
         padding: const EdgeInsets.symmetric(vertical: 4),
         separatorBuilder: (_, _) => Divider(
           height: 1,
           color: colorScheme.outlineVariant.withValues(alpha: 0.35),
         ),
         itemBuilder: (context, index) {
-          final post = _posts[index];
+          final post = _forYouPosts[index];
           return PostCard(post: post);
         },
       ),
@@ -221,29 +240,35 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildFollowingPostsList(ColorScheme colorScheme, TextTheme textTheme) {
-    if (_isLoading && _posts.isEmpty) {
+    if (_isLoadingFollowing && _followingPosts.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final currentUserId = AuthService().currentUser?.id;
-    final followingPosts = _posts.where((p) => p.authorId != currentUserId).toList();
-
-    if (followingPosts.isEmpty) {
-      return _buildFollowingEmptyState(colorScheme, textTheme);
+    if (_followingPosts.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _loadFollowing,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.2),
+            _buildFollowingEmptyState(colorScheme, textTheme),
+          ],
+        ),
+      );
     }
 
     return RefreshIndicator(
-      onRefresh: _loadPosts,
+      onRefresh: _loadFollowing,
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: followingPosts.length,
+        itemCount: _followingPosts.length,
         padding: const EdgeInsets.symmetric(vertical: 4),
         separatorBuilder: (_, _) => Divider(
           height: 1,
           color: colorScheme.outlineVariant.withValues(alpha: 0.35),
         ),
         itemBuilder: (context, index) {
-          final post = followingPosts[index];
+          final post = _followingPosts[index];
           return PostCard(post: post);
         },
       ),
