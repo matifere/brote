@@ -106,6 +106,7 @@ class AuthService {
 
   String? _sessionToken;
   UserProfile? _currentUser;
+  final ValueNotifier<UserProfile?> currentUserNotifier = ValueNotifier<UserProfile?>(null);
 
   String? get sessionToken => _sessionToken;
   UserProfile? get currentUser => _currentUser;
@@ -129,6 +130,7 @@ class AuthService {
       // Restore session in memory immediately
       _sessionToken = token;
       _currentUser = UserProfile.fromJson(profileMap, email: profileMap['email'] as String?);
+      currentUserNotifier.value = _currentUser;
 
       // Verify and update profile with Neon in background
       _verifyTokenWithNeon(token).then((isValid) {
@@ -163,6 +165,7 @@ class AuthService {
           final profileJson = data['profile'] as Map<String, dynamic>;
           final userEmail = data['user']?['email'] as String?;
           _currentUser = UserProfile.fromJson(profileJson, email: userEmail);
+          currentUserNotifier.value = _currentUser;
           await SessionStorage.save(token: token, profile: _currentUser!.toJson());
           return true;
         }
@@ -205,6 +208,7 @@ class AuthService {
         final profileJson = data['profile'] as Map<String, dynamic>;
         final userEmail = data['user']?['email'] as String?;
         _currentUser = UserProfile.fromJson(profileJson, email: userEmail);
+        currentUserNotifier.value = _currentUser;
 
         if (_sessionToken != null && _currentUser != null) {
           await SessionStorage.save(token: _sessionToken!, profile: _currentUser!.toJson());
@@ -248,6 +252,7 @@ class AuthService {
         final profileJson = data['profile'] as Map<String, dynamic>;
         final userEmail = data['user']?['email'] as String?;
         _currentUser = UserProfile.fromJson(profileJson, email: userEmail);
+        currentUserNotifier.value = _currentUser;
 
         if (_sessionToken != null && _currentUser != null) {
           await SessionStorage.save(token: _sessionToken!, profile: _currentUser!.toJson());
@@ -266,10 +271,88 @@ class AuthService {
     }
   }
 
+  /// Fetches and refreshes the current user's profile from Neon Cloud
+  Future<UserProfile?> fetchMyProfile() async {
+    final token = _sessionToken;
+    if (token == null) return _currentUser;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/me');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true && data['profile'] != null) {
+          final profileMap = data['profile'] as Map<String, dynamic>;
+          _currentUser = UserProfile.fromJson(profileMap, email: _currentUser?.email);
+          currentUserNotifier.value = _currentUser;
+          await SessionStorage.save(token: token, profile: _currentUser!.toJson());
+          return _currentUser;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching profile: $e');
+    }
+    return _currentUser;
+  }
+
+  /// Updates display name, bio description, and avatar URL on Neon Cloud
+  Future<AuthResponse> updateProfile({
+    required String displayName,
+    String? bio,
+    String? avatarUrl,
+  }) async {
+    final token = _sessionToken;
+    if (token == null) {
+      return AuthResponse.failure('Sesión no encontrada. Iniciá sesión nuevamente.');
+    }
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/me');
+      final response = await http
+          .put(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'displayName': displayName.trim(),
+              'bio': bio?.trim(),
+              'avatarUrl': avatarUrl?.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        final profileMap = data['profile'] as Map<String, dynamic>;
+        _currentUser = UserProfile.fromJson(profileMap, email: _currentUser?.email);
+        currentUserNotifier.value = _currentUser;
+        await SessionStorage.save(token: token, profile: _currentUser!.toJson());
+
+        return AuthResponse.success(token: token, profile: _currentUser!);
+      } else {
+        final error = data['error'] as String? ?? 'Error al actualizar el perfil';
+        return AuthResponse.failure(error);
+      }
+    } catch (e) {
+      return AuthResponse.failure('Error al conectar con Neon: $e');
+    }
+  }
+
   /// Logout user and clear stored credentials on device
   Future<void> logout() async {
     _sessionToken = null;
     _currentUser = null;
+    currentUserNotifier.value = null;
     await SessionStorage.clear();
   }
 }

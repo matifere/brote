@@ -36,6 +36,24 @@ class UserProfile {
       'email': email,
     };
   }
+
+  UserProfile copyWith({
+    String? id,
+    String? username,
+    String? displayName,
+    String? bio,
+    String? avatarUrl,
+    String? email,
+  }) {
+    return UserProfile(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      displayName: displayName ?? this.displayName,
+      bio: bio ?? this.bio,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      email: email ?? this.email,
+    );
+  }
 }
 
 class AuthResponse {

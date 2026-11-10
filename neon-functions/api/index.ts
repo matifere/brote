@@ -245,4 +245,152 @@ app.get("/api/auth/me", async (c) => {
   }
 });
 
+// Helper for session token verification
+async function getAuthenticatedUser(c: any): Promise<{ userId: string; email: string; token: string } | null> {
+  const authHeader = c.req.header("authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "") || c.req.query("token");
+  if (!token) return null;
+
+  const p = getPool();
+  const res = await p.query(
+    `SELECT s.token, u.id, u.email
+     FROM neon_auth.session s
+     INNER JOIN neon_auth.user u ON s."userId" = u.id
+     WHERE s.token = $1 AND s."expiresAt" > now()
+     LIMIT 1`,
+    [token]
+  );
+  if (res.rows.length === 0) return null;
+  return {
+    userId: res.rows[0].id,
+    email: res.rows[0].email,
+    token: res.rows[0].token,
+  };
+}
+
+// Read own profile
+app.get("/api/profile/me", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    const profileRes = await p.query(
+      "SELECT id, username, display_name, bio, avatar_url FROM public.profiles WHERE id = $1",
+      [auth.userId]
+    );
+    if (profileRes.rows.length === 0) {
+      return c.json({ success: false, error: "Perfil no encontrado" }, 404);
+    }
+    const profile = profileRes.rows[0];
+
+    return c.json({
+      success: true,
+      profile: {
+        id: profile.id,
+        username: profile.username,
+        displayName: profile.display_name,
+        bio: profile.bio,
+        avatarUrl: profile.avatar_url,
+      },
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al obtener perfil" }, 500);
+  }
+});
+
+// Update own profile
+const updateProfileHandler = async (c: any) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.json();
+    const displayName = (body.displayName ?? "").trim();
+    if (!displayName) {
+      return c.json({ success: false, error: "El nombre no puede estar vacío." }, 400);
+    }
+    if (displayName.length > 60) {
+      return c.json({ success: false, error: "El nombre no puede superar los 60 caracteres." }, 400);
+    }
+    if (body.bio && body.bio.length > 300) {
+      return c.json({ success: false, error: "La descripción no puede superar los 300 caracteres." }, 400);
+    }
+
+    const p = getPool();
+    const updates: string[] = ["display_name = $1", "updated_at = now()"];
+    const values: any[] = [displayName];
+    let paramIndex = 2;
+
+    if (body.bio !== undefined) {
+      updates.push(`bio = $${paramIndex++}`);
+      values.push(body.bio && body.bio.trim().length > 0 ? body.bio.trim() : null);
+    }
+
+    if (body.avatarUrl !== undefined) {
+      updates.push(`avatar_url = $${paramIndex++}`);
+      values.push(body.avatarUrl && body.avatarUrl.trim().length > 0 ? body.avatarUrl.trim() : null);
+    }
+
+    values.push(auth.userId);
+    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url`;
+    const updateRes = await p.query(sql, values);
+
+    // Keep auth user name synced
+    await p.query(
+      `UPDATE neon_auth.user SET name = $1, "updatedAt" = now() WHERE id = $2`,
+      [displayName, auth.userId]
+    );
+
+    const updated = updateRes.rows[0];
+    return c.json({
+      success: true,
+      profile: {
+        id: updated.id,
+        username: updated.username,
+        displayName: updated.display_name,
+        bio: updated.bio,
+        avatarUrl: updated.avatar_url,
+      },
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al actualizar perfil" }, 500);
+  }
+};
+
+app.put("/api/profile/me", updateProfileHandler);
+app.patch("/api/profile/me", updateProfileHandler);
+
+// Read any user profile by username
+app.get("/api/profile/:username", async (c) => {
+  try {
+    const username = c.req.param("username").toLowerCase();
+    const p = getPool();
+    const res = await p.query(
+      "SELECT id, username, display_name, bio, avatar_url FROM public.profiles WHERE lower(username) = $1",
+      [username]
+    );
+    if (res.rows.length === 0) {
+      return c.json({ success: false, error: "Usuario no encontrado" }, 404);
+    }
+    const row = res.rows[0];
+    return c.json({
+      success: true,
+      profile: {
+        id: row.id,
+        username: row.username,
+        displayName: row.display_name,
+        bio: row.bio,
+        avatarUrl: row.avatar_url,
+      },
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al buscar perfil" }, 500);
+  }
+});
+
 export default app;

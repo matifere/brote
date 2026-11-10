@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
+import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
 
 class PostItem {
@@ -281,26 +282,43 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
               );
             },
           ),
-          InkWell(
-            onTap: widget.onOpenProfile,
-            borderRadius: BorderRadius.circular(20),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: CircleAvatar(
-                radius: 17,
-                backgroundColor: colorScheme.primaryFixedDim,
-                child: Text(
-                  widget.profile.displayName.isNotEmpty
-                      ? widget.profile.displayName[0].toUpperCase()
-                      : '?',
-                  style: TextStyle(
-                    color: colorScheme.onPrimaryFixedVariant,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+          ValueListenableBuilder<UserProfile?>(
+            valueListenable: AuthService().currentUserNotifier,
+            builder: (context, user, _) {
+              final activeProfile = user ?? widget.profile;
+              final avatarUrl = activeProfile.avatarUrl;
+              final displayName = activeProfile.displayName;
+
+              return InkWell(
+                onTap: widget.onOpenProfile,
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: CircleAvatar(
+                    radius: 17,
+                    backgroundColor: colorScheme.primaryFixedDim,
+                    backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                        ? NetworkImage(avatarUrl)
+                        : null,
+                    onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
+                        ? (exception, stackTrace) {}
+                        : null,
+                    child: (avatarUrl == null || avatarUrl.isEmpty)
+                        ? Text(
+                            displayName.isNotEmpty
+                                ? displayName[0].toUpperCase()
+                                : '?',
+                            style: TextStyle(
+                              color: colorScheme.onPrimaryFixedVariant,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          )
+                        : null,
                   ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ],
         bottom: PreferredSize(

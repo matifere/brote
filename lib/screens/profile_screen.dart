@@ -3,6 +3,7 @@ import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
 import 'auth_screen.dart';
+import 'edit_profile_screen.dart';
 import 'feed_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -16,6 +17,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late UserProfile _currentProfile;
 
   final List<PostItem> _userPosts = [
     PostItem(
@@ -51,12 +53,38 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _currentProfile = AuthService().currentUser ?? widget.profile;
+    AuthService().currentUserNotifier.addListener(_onProfileChanged);
+    // Refresh latest data from Neon cloud backend
+    AuthService().fetchMyProfile();
   }
 
   @override
   void dispose() {
+    AuthService().currentUserNotifier.removeListener(_onProfileChanged);
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _onProfileChanged() {
+    if (mounted && AuthService().currentUser != null) {
+      setState(() {
+        _currentProfile = AuthService().currentUser!;
+      });
+    }
+  }
+
+  Future<void> _openEditProfile() async {
+    final updated = await Navigator.of(context).push<UserProfile>(
+      MaterialPageRoute(
+        builder: (_) => EditProfileScreen(profile: _currentProfile),
+      ),
+    );
+    if (updated != null && mounted) {
+      setState(() {
+        _currentProfile = updated;
+      });
+    }
   }
 
   Future<void> _handleLogout() async {
@@ -97,10 +125,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    final displayName = widget.profile.displayName;
-    final username = widget.profile.username;
-    final bio = widget.profile.bio ??
+    final displayName = _currentProfile.displayName;
+    final username = _currentProfile.username;
+    final bio = _currentProfile.bio ??
         'Creador de contenido & fotografía. Apasionado por la tecnología, la música y el diseño. Conectando todos los días.';
+    final avatarUrl = _currentProfile.avatarUrl;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
@@ -209,14 +238,22 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                           child: CircleAvatar(
                             radius: 40,
                             backgroundColor: colorScheme.primary,
-                            child: Text(
-                              displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                              style: TextStyle(
-                                color: colorScheme.onPrimary,
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                                ? NetworkImage(avatarUrl)
+                                : null,
+                            onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
+                                ? (exception, stackTrace) {}
+                                : null,
+                            child: (avatarUrl == null || avatarUrl.isEmpty)
+                                ? Text(
+                                    displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                                    style: TextStyle(
+                                      color: colorScheme.onPrimary,
+                                      fontSize: 32,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  )
+                                : null,
                           ),
                         ),
                       ),
@@ -233,11 +270,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             OutlinedButton(
-                              onPressed: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Editor de perfil próximamente.')),
-                                );
-                              },
+                              onPressed: _openEditProfile,
                               style: OutlinedButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
                                 side: BorderSide(color: colorScheme.outlineVariant),
@@ -369,8 +402,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       ),
       itemBuilder: (context, index) {
         final post = _userPosts[index];
-        final authorName = widget.profile.displayName;
-        final authorUsername = widget.profile.username;
+        final authorName = _currentProfile.displayName;
+        final authorUsername = _currentProfile.username;
+        final authorAvatar = _currentProfile.avatarUrl;
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -380,13 +414,21 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               CircleAvatar(
                 radius: 20,
                 backgroundColor: colorScheme.primaryContainer,
-                child: Text(
-                  authorName.isNotEmpty ? authorName[0].toUpperCase() : '?',
-                  style: TextStyle(
-                    color: colorScheme.onPrimaryContainer,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                backgroundImage: (authorAvatar != null && authorAvatar.isNotEmpty)
+                    ? NetworkImage(authorAvatar)
+                    : null,
+                onBackgroundImageError: (authorAvatar != null && authorAvatar.isNotEmpty)
+                    ? (exception, stackTrace) {}
+                    : null,
+                child: (authorAvatar == null || authorAvatar.isEmpty)
+                    ? Text(
+                        authorName.isNotEmpty ? authorName[0].toUpperCase() : '?',
+                        style: TextStyle(
+                          color: colorScheme.onPrimaryContainer,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    : null,
               ),
               const SizedBox(width: 12),
               Expanded(
