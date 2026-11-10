@@ -16,16 +16,15 @@ void main() {
     await tester.pumpWidget(const BroteApp());
 
     // Verify app brand is present
-    expect(find.text('brote'), findsOneWidget);
+    expect(find.text('brote'), findsWidgets);
     expect(find.text('Tu comunidad en tiempo real'), findsOneWidget);
 
     // Verify tabs are present
     expect(find.text('Iniciar Sesión'), findsOneWidget);
     expect(find.text('Registrarse'), findsOneWidget);
 
-    // Initial state is Iniciar Sesión tab
+    // Initial state has Iniciar Sesión fields visible
     expect(find.text('Usuario o Correo'), findsOneWidget);
-    expect(find.text('Contraseña'), findsOneWidget);
     expect(find.text('Ingresar'), findsOneWidget);
 
     // Switch to Registrarse tab

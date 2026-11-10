@@ -198,8 +198,8 @@ export function createServer() {
 const isMain = process.argv[1]?.endsWith("index.js") || process.argv[1]?.endsWith("index.ts");
 if (isMain) {
   const server = createServer();
-  server.listen(config.port, () => {
-    console.log(`[Brote Neon Backend] Server listening on http://localhost:${config.port}`);
+  server.listen(config.port, "0.0.0.0", () => {
+    console.log(`[Brote Neon Backend] Server listening on http://0.0.0.0:${config.port}`);
   });
 
   const cleanup = async () => {
