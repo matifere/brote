@@ -18,6 +18,11 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   late UserProfile _currentProfile;
+  bool _isFollowing = false;
+
+  bool get _isOwnProfile =>
+      AuthService().currentUser == null ||
+      AuthService().currentUser?.id == _currentProfile.id;
 
   final List<PostItem> _userPosts = [
     PostItem(
@@ -53,10 +58,12 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _currentProfile = AuthService().currentUser ?? widget.profile;
-    AuthService().currentUserNotifier.addListener(_onProfileChanged);
-    // Refresh latest data from Neon cloud backend
-    AuthService().fetchMyProfile();
+    final isMe = AuthService().currentUser?.id == widget.profile.id;
+    _currentProfile = isMe ? (AuthService().currentUser ?? widget.profile) : widget.profile;
+    if (isMe) {
+      AuthService().currentUserNotifier.addListener(_onProfileChanged);
+      AuthService().fetchMyProfile();
+    }
   }
 
   @override
@@ -143,6 +150,12 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               elevation: 0,
               scrolledUnderElevation: 0,
               backgroundColor: colorScheme.surface,
+              leading: Navigator.of(context).canPop()
+                  ? IconButton(
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      onPressed: () => Navigator.of(context).pop(),
+                    )
+                  : null,
               title: Row(
                 children: [
                   const BroteLogo(size: 28, useDarkSquircle: true),
@@ -166,11 +179,12 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     );
                   },
                 ),
-                IconButton(
-                  tooltip: 'Cerrar sesión',
-                  icon: Icon(Icons.logout_rounded, color: colorScheme.error),
-                  onPressed: _handleLogout,
-                ),
+                if (_isOwnProfile)
+                  IconButton(
+                    tooltip: 'Cerrar sesión',
+                    icon: Icon(Icons.logout_rounded, color: colorScheme.error),
+                    onPressed: _handleLogout,
+                  ),
               ],
             ),
             SliverToBoxAdapter(
@@ -276,21 +290,42 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            OutlinedButton(
-                              onPressed: _openEditProfile,
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                                side: BorderSide(color: colorScheme.outlineVariant),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                              ),
-                              child: Text(
-                                'Editar perfil',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: colorScheme.onSurface,
+                            if (_isOwnProfile)
+                              OutlinedButton(
+                                onPressed: _openEditProfile,
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                                  side: BorderSide(color: colorScheme.outlineVariant),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                ),
+                                child: Text(
+                                  'Editar perfil',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                              )
+                            else
+                              FilledButton(
+                                onPressed: () {
+                                  setState(() => _isFollowing = !_isFollowing);
+                                },
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: _isFollowing
+                                      ? colorScheme.surfaceContainerHighest
+                                      : colorScheme.primary,
+                                  foregroundColor: _isFollowing
+                                      ? colorScheme.onSurface
+                                      : colorScheme.onPrimary,
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                ),
+                                child: Text(
+                                  _isFollowing ? 'Siguiendo' : 'Seguir',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
                                 ),
                               ),
-                            ),
                           ],
                         ),
                         const SizedBox(height: 12),

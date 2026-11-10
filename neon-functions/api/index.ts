@@ -625,6 +625,71 @@ app.get("/api/banner/:key", async (c) => {
   }
 });
 
+// Search profiles by username or displayName
+app.get("/api/profiles/search", async (c) => {
+  try {
+    const q = (c.req.query("q") || "").trim().toLowerCase();
+    if (!q) {
+      return c.json({ success: true, results: [] });
+    }
+
+    const p = getPool();
+    const res = await p.query(
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url
+       FROM public.profiles
+       WHERE lower(username) LIKE $1 OR lower(display_name) LIKE $1
+       ORDER BY
+         CASE
+           WHEN lower(username) = $2 THEN 0
+           WHEN lower(username) LIKE $3 THEN 1
+           ELSE 2
+         END,
+         display_name ASC
+       LIMIT 30`,
+      [`%${q}%`, q, `${q}%`]
+    );
+
+    const results = res.rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      displayName: row.display_name,
+      bio: row.bio,
+      avatarUrl: row.avatar_url,
+      bannerUrl: row.banner_url,
+    }));
+
+    return c.json({ success: true, results });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al buscar perfiles" }, 500);
+  }
+});
+
+// Suggested / recent profiles for discovery
+app.get("/api/profiles/suggested", async (c) => {
+  try {
+    const p = getPool();
+    const res = await p.query(
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url
+       FROM public.profiles
+       ORDER BY updated_at DESC NULLS LAST, created_at DESC
+       LIMIT 10`
+    );
+
+    const results = res.rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      displayName: row.display_name,
+      bio: row.bio,
+      avatarUrl: row.avatar_url,
+      bannerUrl: row.banner_url,
+    }));
+
+    return c.json({ success: true, results });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message || "Error al obtener sugerencias" }, 500);
+  }
+});
+
 // Read any user profile by username
 app.get("/api/profile/:username", async (c) => {
   try {

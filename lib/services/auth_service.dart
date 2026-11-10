@@ -430,6 +430,51 @@ class AuthService {
     }
   }
 
+  /// Search real user profiles on Neon by username or display name
+  Future<List<UserProfile>> searchProfiles(String query) async {
+    final cleanQuery = query.trim();
+    if (cleanQuery.isEmpty) return [];
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profiles/search?q=${Uri.encodeComponent(cleanQuery)}');
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['results'] is List) {
+          final list = data['results'] as List;
+          return list
+              .map((item) => UserProfile.fromJson(item as Map<String, dynamic>))
+              .toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error searching profiles: $e');
+    }
+    return [];
+  }
+
+  /// Get suggested real user profiles for discovery
+  Future<List<UserProfile>> getSuggestedProfiles() async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/profiles/suggested');
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['results'] is List) {
+          final list = data['results'] as List;
+          return list
+              .map((item) => UserProfile.fromJson(item as Map<String, dynamic>))
+              .toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching suggested profiles: $e');
+    }
+    return [];
+  }
+
   /// Logout user and clear stored credentials on device
   Future<void> logout() async {
     _sessionToken = null;
