@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
 import '../widgets/post_card.dart';
 import 'auth_screen.dart';
+import 'chat_conversation_screen.dart';
 import 'edit_profile_screen.dart';
 import 'follow_requests_screen.dart';
 
@@ -46,6 +47,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     if (mounted) {
       setState(() => _isFollowLoading = false);
+    }
+  }
+
+  Future<void> _openChatWithUser() async {
+    final res = await AuthService().startConversationWithUser(_currentProfile.id);
+    if (!mounted) return;
+
+    if (res['success'] == true && res['conversationId'] != null) {
+      final convId = res['conversationId'] as String;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ChatConversationScreen(
+            conversationId: convId,
+            otherParticipant: _currentProfile,
+          ),
+        ),
+      );
+    } else {
+      final error = res['error'] as String? ?? 'No se pudo abrir el chat';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -334,7 +355,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                                 ),
                               )
-                            else
+                            else ...[
                               FilledButton(
                                 onPressed: _isFollowLoading ? null : _handleFollowToggle,
                                 style: FilledButton.styleFrom(
@@ -362,6 +383,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         style: const TextStyle(fontWeight: FontWeight.bold),
                                       ),
                               ),
+                              if (!_currentProfile.isPrivate || _currentProfile.isFollowing) ...[
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  onPressed: _openChatWithUser,
+                                  icon: const Icon(Icons.mail_outline_rounded, size: 16),
+                                  label: const Text('Mensaje'),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                    side: BorderSide(color: colorScheme.outlineVariant),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ],
                         ),
                         const SizedBox(height: 12),

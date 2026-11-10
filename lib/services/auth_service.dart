@@ -3,6 +3,8 @@ import 'dart:io' show File, Platform;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/chat_item.dart';
+import '../models/chat_message.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
 
@@ -109,6 +111,7 @@ class AuthService {
   UserProfile? _currentUser;
   final ValueNotifier<UserProfile?> currentUserNotifier = ValueNotifier<UserProfile?>(null);
   final ValueNotifier<int> postsRefreshNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<int> chatsRefreshNotifier = ValueNotifier<int>(0);
 
   String? get sessionToken => _sessionToken;
   UserProfile? get currentUser => _currentUser;
@@ -814,6 +817,224 @@ class AuthService {
       debugPrint('Error toggling like: $e');
     }
     return null;
+  }
+
+  /// Fetches all active conversations for the authenticated user
+  Future<List<ChatItem>> getConversations() async {
+    final token = _sessionToken;
+    if (token == null) return [];
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/chats');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['chats'] is List) {
+          final list = data['chats'] as List;
+          return list.map((item) => ChatItem.fromJson(item as Map<String, dynamic>)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching conversations: $e');
+    }
+    return [];
+  }
+
+  /// Starts or gets existing conversation with a user (handles privacy restrictions)
+  Future<Map<String, dynamic>> startConversationWithUser(
+    String targetUserId, {
+    String? initialMessage,
+  }) async {
+    final token = _sessionToken;
+    if (token == null) {
+      return {'success': false, 'error': 'No hay sesión activa.'};
+    }
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/chats/with/$targetUserId');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          if (initialMessage != null && initialMessage.trim().isNotEmpty)
+            'initialMessage': initialMessage.trim(),
+        }),
+      ).timeout(const Duration(seconds: 12));
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        chatsRefreshNotifier.value++;
+        UserProfile? other;
+        if (data['otherParticipant'] != null) {
+          other = UserProfile.fromJson(data['otherParticipant'] as Map<String, dynamic>);
+        }
+        return {
+          'success': true,
+          'conversationId': data['conversationId']?.toString(),
+          'otherParticipant': other,
+        };
+      } else {
+        return {
+          'success': false,
+          'error': data['error'] as String? ?? 'Error al iniciar la conversación',
+          'isPrivateRestricted': data['isPrivateRestricted'] as bool? ?? false,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error starting conversation: $e');
+      return {'success': false, 'error': 'Error de conexión: $e'};
+    }
+  }
+
+  /// Fetches messages and other participant info for a conversation
+  Future<Map<String, dynamic>?> getConversationMessages(String conversationId) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/chats/$conversationId/messages');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['messages'] is List) {
+          final msgs = (data['messages'] as List)
+              .map((item) => ChatMessage.fromJson(item as Map<String, dynamic>))
+              .toList();
+          UserProfile? other;
+          if (data['otherParticipant'] != null) {
+            other = UserProfile.fromJson(data['otherParticipant'] as Map<String, dynamic>);
+          }
+          return {
+            'messages': msgs,
+            'otherParticipant': other,
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching conversation messages: $e');
+    }
+    return null;
+  }
+
+  /// Sends a message in a conversation (handles privacy restrictions)
+  Future<Map<String, dynamic>> sendMessage(
+    String conversationId, {
+    String? content,
+    String? mediaUrl,
+  }) async {
+    final token = _sessionToken;
+    if (token == null) {
+      return {'success': false, 'error': 'Sesión no iniciada'};
+    }
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/chats/$conversationId/messages');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'content': content?.trim(),
+          'mediaUrl': mediaUrl?.trim(),
+        }),
+      ).timeout(const Duration(seconds: 12));
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true && data['message'] != null) {
+        chatsRefreshNotifier.value++;
+        return {
+          'success': true,
+          'message': ChatMessage.fromJson(data['message'] as Map<String, dynamic>),
+        };
+      } else {
+        return {
+          'success': false,
+          'error': data['error'] as String? ?? 'Error al enviar el mensaje',
+          'isPrivateRestricted': data['isPrivateRestricted'] as bool? ?? false,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error sending message: $e');
+      return {'success': false, 'error': 'Error de conexión: $e'};
+    }
+  }
+
+  /// Uploads an image attached to a chat to Neon Object Storage
+  Future<String?> uploadChatImage(
+    List<int> imageBytes, {
+    String filename = 'chat.jpg',
+  }) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/chats/upload-image');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..files.add(http.MultipartFile.fromBytes(
+          'file',
+          imageBytes,
+          filename: filename,
+        ));
+
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamedResponse);
+      final Map<String, dynamic> data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data['imageUrl'] as String?;
+      }
+    } catch (e) {
+      debugPrint('Error uploading chat image: $e');
+    }
+    return null;
+  }
+
+  /// Fetches candidate users to start a chat with, indicating privacy permissions
+  Future<List<ChatCandidate>> getChatCandidates({String query = ''}) async {
+    final token = _sessionToken;
+    if (token == null) return [];
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/chats/candidates?q=${Uri.encodeComponent(query.trim())}');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['candidates'] is List) {
+          final list = data['candidates'] as List;
+          return list.map((item) => ChatCandidate.fromJson(item as Map<String, dynamic>)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching chat candidates: $e');
+    }
+    return [];
   }
 
   /// Logout user and clear stored credentials on device

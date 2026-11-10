@@ -13,6 +13,7 @@ class UserProfile {
   final String followStatus; // 'none', 'pending', 'accepted'
   final bool isFollowedBy;
   final bool canViewContent;
+  final bool isVerified;
 
   const UserProfile({
     required this.id,
@@ -29,6 +30,7 @@ class UserProfile {
     this.followStatus = 'none',
     this.isFollowedBy = false,
     this.canViewContent = true,
+    this.isVerified = false,
   });
 
   bool get isFollowing => followStatus == 'accepted';
@@ -50,6 +52,7 @@ class UserProfile {
       followStatus: json['followStatus'] as String? ?? json['follow_status'] as String? ?? 'none',
       isFollowedBy: json['isFollowedBy'] as bool? ?? json['is_followed_by'] as bool? ?? false,
       canViewContent: json['canViewContent'] as bool? ?? json['can_view_content'] as bool? ?? true,
+      isVerified: json['isVerified'] as bool? ?? json['is_verified'] as bool? ?? false,
     );
   }
 
@@ -69,6 +72,7 @@ class UserProfile {
       'followStatus': followStatus,
       'isFollowedBy': isFollowedBy,
       'canViewContent': canViewContent,
+      'isVerified': isVerified,
     };
   }
 
@@ -87,6 +91,7 @@ class UserProfile {
     String? followStatus,
     bool? isFollowedBy,
     bool? canViewContent,
+    bool? isVerified,
   }) {
     return UserProfile(
       id: id ?? this.id,
@@ -103,6 +108,7 @@ class UserProfile {
       followStatus: followStatus ?? this.followStatus,
       isFollowedBy: isFollowedBy ?? this.isFollowedBy,
       canViewContent: canViewContent ?? this.canViewContent,
+      isVerified: isVerified ?? this.isVerified,
     );
   }
 }

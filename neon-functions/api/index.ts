@@ -1337,4 +1337,529 @@ app.post("/api/posts/:id/like", async (c) => {
   }
 });
 
+// ==========================================
+// CHAT & MESSAGING ENDPOINTS (WITH PRIVACY)
+// ==========================================
+
+// List conversations for authenticated user
+app.get("/api/chats", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+
+    // Query all conversations where auth.userId is a participant
+    const convsRes = await p.query(
+      `SELECT 
+        c.id,
+        c.is_group,
+        c.title,
+        c.last_message_at,
+        c.created_at,
+        cp.last_read_at,
+        -- Other participant info for 1-on-1 chats
+        other_p.id as other_id,
+        other_p.username as other_username,
+        other_p.display_name as other_display_name,
+        other_p.avatar_url as other_avatar_url,
+        other_p.is_verified as other_is_verified,
+        other_p.is_private as other_is_private,
+        -- Last message info
+        last_m.content as last_message_content,
+        last_m.media_url as last_message_media_url,
+        last_m.sender_id as last_message_sender_id,
+        last_m.created_at as last_message_created_at,
+        -- Unread count
+        COALESCE((
+          SELECT count(*)::int 
+          FROM public.messages m 
+          WHERE m.conversation_id = c.id 
+            AND m.sender_id != $1 
+            AND (cp.last_read_at IS NULL OR m.created_at > cp.last_read_at)
+        ), 0) as unread_count
+      FROM public.conversations c
+      JOIN public.conversation_participants cp ON c.id = cp.conversation_id AND cp.user_id = $1
+      LEFT JOIN LATERAL (
+        SELECT p.*
+        FROM public.conversation_participants other_cp
+        JOIN public.profiles p ON other_cp.user_id = p.id
+        WHERE other_cp.conversation_id = c.id AND other_cp.user_id != $1
+        LIMIT 1
+      ) other_p ON true
+      LEFT JOIN LATERAL (
+        SELECT content, media_url, sender_id, created_at
+        FROM public.messages
+        WHERE conversation_id = c.id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) last_m ON true
+      ORDER BY c.last_message_at DESC`,
+      [auth.userId]
+    );
+
+    const chats = convsRes.rows.map((row) => ({
+      id: row.id,
+      isGroup: row.is_group,
+      title: row.title,
+      lastMessageAt: row.last_message_at,
+      unreadCount: row.unread_count,
+      lastMessage: row.last_message_content || (row.last_message_media_url ? "📷 Foto" : ""),
+      lastMessageTime: row.last_message_created_at,
+      isRead: row.unread_count === 0,
+      otherParticipant: row.other_id ? {
+        id: row.other_id,
+        username: row.other_username,
+        displayName: row.other_display_name,
+        avatarUrl: row.other_avatar_url,
+        isVerified: row.other_is_verified,
+        isPrivate: row.other_is_private,
+      } : null,
+    }));
+
+    return c.json({ success: true, chats });
+  } catch (err: any) {
+    console.error("List chats error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener conversaciones" }, 500);
+  }
+});
+
+// Start or get existing conversation with a user (with strict privacy check)
+app.post("/api/chats/with/:targetUserId", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const targetUserId = c.req.param("targetUserId");
+    if (targetUserId === auth.userId) {
+      return c.json({ success: false, error: "No podés iniciar un chat con vos mismo" }, 400);
+    }
+
+    const p = getPool();
+
+    // Check target profile
+    const targetRes = await p.query(
+      "SELECT id, username, display_name, avatar_url, is_verified, is_private FROM public.profiles WHERE id = $1 LIMIT 1",
+      [targetUserId]
+    );
+    if (targetRes.rows.length === 0) {
+      return c.json({ success: false, error: "Usuario no encontrado" }, 404);
+    }
+    const target = targetRes.rows[0];
+
+    // PRIVACY CHECK:
+    // If target profile is private, verify current user is an accepted follower OR target follows current user
+    if (target.is_private) {
+      const followRes = await p.query(
+        `SELECT status FROM public.follows
+         WHERE (follower_id = $1 AND following_id = $2 AND status = 'accepted')
+            OR (follower_id = $2 AND following_id = $1 AND status = 'accepted')
+         LIMIT 1`,
+        [auth.userId, targetUserId]
+      );
+      if (followRes.rows.length === 0) {
+        return c.json({
+          success: false,
+          isPrivateRestricted: true,
+          error: "Esta cuenta es privada. Solo podés enviarle mensajes si es tu seguidor o te aceptó la solicitud.",
+        }, 403);
+      }
+    }
+
+    // Check if 1-to-1 conversation already exists
+    const existingConv = await p.query(
+      `SELECT c.id 
+       FROM public.conversations c
+       JOIN public.conversation_participants cp1 ON c.id = cp1.conversation_id AND cp1.user_id = $1
+       JOIN public.conversation_participants cp2 ON c.id = cp2.conversation_id AND cp2.user_id = $2
+       WHERE c.is_group = false
+       LIMIT 1`,
+      [auth.userId, targetUserId]
+    );
+
+    let conversationId: string;
+    if (existingConv.rows.length > 0) {
+      conversationId = existingConv.rows[0].id;
+    } else {
+      // Create new conversation
+      const insertConv = await p.query(
+        "INSERT INTO public.conversations (is_group, last_message_at, created_at) VALUES (false, now(), now()) RETURNING id"
+      );
+      conversationId = insertConv.rows[0].id;
+
+      // Add participants
+      await p.query(
+        `INSERT INTO public.conversation_participants (conversation_id, user_id, joined_at)
+         VALUES ($1, $2, now()), ($1, $3, now())`,
+        [conversationId, auth.userId, targetUserId]
+      );
+    }
+
+    // Optional initial message
+    const body = await c.req.json().catch(() => ({}));
+    if (body.initialMessage && typeof body.initialMessage === "string" && body.initialMessage.trim().length > 0) {
+      await p.query(
+        `INSERT INTO public.messages (conversation_id, sender_id, content, created_at)
+         VALUES ($1, $2, $3, now())`,
+        [conversationId, auth.userId, body.initialMessage.trim()]
+      );
+      await p.query(
+        "UPDATE public.conversations SET last_message_at = now() WHERE id = $1",
+        [conversationId]
+      );
+      await p.query(
+        "UPDATE public.conversation_participants SET last_read_at = now() WHERE conversation_id = $1 AND user_id = $2",
+        [conversationId, auth.userId]
+      );
+    }
+
+    return c.json({
+      success: true,
+      conversationId,
+      otherParticipant: {
+        id: target.id,
+        username: target.username,
+        displayName: target.display_name,
+        avatarUrl: target.avatar_url,
+        isVerified: target.is_verified,
+        isPrivate: target.is_private,
+      },
+    });
+  } catch (err: any) {
+    console.error("Start chat error:", err);
+    return c.json({ success: false, error: err.message || "Error al iniciar conversación" }, 500);
+  }
+});
+
+// Get messages for a conversation
+app.get("/api/chats/:conversationId/messages", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const conversationId = c.req.param("conversationId");
+    const p = getPool();
+
+    // Verify user is a participant
+    const partCheck = await p.query(
+      "SELECT 1 FROM public.conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+      [conversationId, auth.userId]
+    );
+    if (partCheck.rows.length === 0) {
+      return c.json({ success: false, error: "No tenés permiso para ver esta conversación" }, 403);
+    }
+
+    // Mark as read for this user
+    await p.query(
+      "UPDATE public.conversation_participants SET last_read_at = now() WHERE conversation_id = $1 AND user_id = $2",
+      [conversationId, auth.userId]
+    );
+
+    // Get messages
+    const msgsRes = await p.query(
+      `SELECT 
+        m.id,
+        m.conversation_id,
+        m.sender_id,
+        m.content,
+        m.media_url,
+        m.created_at,
+        p.display_name as sender_name,
+        p.username as sender_username,
+        p.avatar_url as sender_avatar_url
+      FROM public.messages m
+      JOIN public.profiles p ON m.sender_id = p.id
+      WHERE m.conversation_id = $1
+      ORDER BY m.created_at ASC`,
+      [conversationId]
+    );
+
+    // Get other participant info
+    const otherRes = await p.query(
+      `SELECT p.id, p.username, p.display_name, p.avatar_url, p.is_verified, p.is_private
+       FROM public.conversation_participants cp
+       JOIN public.profiles p ON cp.user_id = p.id
+       WHERE cp.conversation_id = $1 AND cp.user_id != $2
+       LIMIT 1`,
+      [conversationId, auth.userId]
+    );
+
+    return c.json({
+      success: true,
+      messages: msgsRes.rows.map((row) => ({
+        id: row.id,
+        conversationId: row.conversation_id,
+        senderId: row.sender_id,
+        senderName: row.sender_name,
+        senderUsername: row.sender_username,
+        senderAvatarUrl: row.sender_avatar_url,
+        content: row.content || "",
+        mediaUrl: row.media_url,
+        createdAt: row.created_at,
+        isMe: row.sender_id === auth.userId,
+      })),
+      otherParticipant: otherRes.rows[0] ? {
+        id: otherRes.rows[0].id,
+        username: otherRes.rows[0].username,
+        displayName: otherRes.rows[0].display_name,
+        avatarUrl: otherRes.rows[0].avatar_url,
+        isVerified: otherRes.rows[0].is_verified,
+        isPrivate: otherRes.rows[0].is_private,
+      } : null,
+    });
+  } catch (err: any) {
+    console.error("Get messages error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener mensajes" }, 500);
+  }
+});
+
+// Send a message in a conversation (with strict privacy check)
+app.post("/api/chats/:conversationId/messages", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const conversationId = c.req.param("conversationId");
+    const p = getPool();
+
+    // Verify user is a participant
+    const partCheck = await p.query(
+      "SELECT 1 FROM public.conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+      [conversationId, auth.userId]
+    );
+    if (partCheck.rows.length === 0) {
+      return c.json({ success: false, error: "No tenés permiso para enviar mensajes en esta conversación" }, 403);
+    }
+
+    // PRIVACY CHECK:
+    // If 1-to-1 conversation, check other participant's privacy
+    const otherCheck = await p.query(
+      `SELECT p.id, p.is_private 
+       FROM public.conversation_participants cp
+       JOIN public.profiles p ON cp.user_id = p.id
+       WHERE cp.conversation_id = $1 AND cp.user_id != $2
+       LIMIT 1`,
+      [conversationId, auth.userId]
+    );
+
+    if (otherCheck.rows.length > 0 && otherCheck.rows[0].is_private) {
+      const otherId = otherCheck.rows[0].id;
+      const followCheck = await p.query(
+        `SELECT status FROM public.follows
+         WHERE (follower_id = $1 AND following_id = $2 AND status = 'accepted')
+            OR (follower_id = $2 AND following_id = $1 AND status = 'accepted')
+         LIMIT 1`,
+        [auth.userId, otherId]
+      );
+      if (followCheck.rows.length === 0) {
+        return c.json({
+          success: false,
+          isPrivateRestricted: true,
+          error: "Esta cuenta es privada. Solo podés enviarle mensajes si es tu seguidor o te aceptó la solicitud.",
+        }, 403);
+      }
+    }
+
+    const body = await c.req.json();
+    const content = (body.content || "").trim();
+    const mediaUrl = body.mediaUrl || null;
+
+    if (!content && !mediaUrl) {
+      return c.json({ success: false, error: "El mensaje no puede estar vacío" }, 400);
+    }
+
+    // Insert message
+    const insertRes = await p.query(
+      `INSERT INTO public.messages (conversation_id, sender_id, content, media_url, created_at)
+       VALUES ($1, $2, $3, $4, now())
+       RETURNING id, conversation_id, sender_id, content, media_url, created_at`,
+      [conversationId, auth.userId, content || null, mediaUrl]
+    );
+
+    const msg = insertRes.rows[0];
+
+    // Update conversation timestamp
+    await p.query(
+      "UPDATE public.conversations SET last_message_at = now() WHERE id = $1",
+      [conversationId]
+    );
+
+    // Update sender last_read_at
+    await p.query(
+      "UPDATE public.conversation_participants SET last_read_at = now() WHERE conversation_id = $1 AND user_id = $2",
+      [conversationId, auth.userId]
+    );
+
+    // Get sender info
+    const senderRes = await p.query(
+      "SELECT username, display_name, avatar_url FROM public.profiles WHERE id = $1",
+      [auth.userId]
+    );
+    const sender = senderRes.rows[0];
+
+    return c.json({
+      success: true,
+      message: {
+        id: msg.id,
+        conversationId: msg.conversation_id,
+        senderId: msg.sender_id,
+        senderName: sender?.display_name || "Yo",
+        senderUsername: sender?.username || "yo",
+        senderAvatarUrl: sender?.avatar_url,
+        content: msg.content || "",
+        mediaUrl: msg.media_url,
+        createdAt: msg.created_at,
+        isMe: true,
+      },
+    });
+  } catch (err: any) {
+    console.error("Send message error:", err);
+    return c.json({ success: false, error: err.message || "Error al enviar mensaje" }, 500);
+  }
+});
+
+// Search or list candidate users for new chat respecting privacy rules
+app.get("/api/chats/candidates", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const query = (c.req.query("q") || "").trim().toLowerCase();
+    const p = getPool();
+
+    let sqlQuery: string;
+    let params: any[];
+
+    if (query.length > 0) {
+      sqlQuery = `
+        SELECT 
+          p.id,
+          p.username,
+          p.display_name,
+          p.avatar_url,
+          p.is_verified,
+          p.is_private,
+          EXISTS(
+            SELECT 1 FROM public.follows f 
+            WHERE f.follower_id = $1 AND f.following_id = p.id AND f.status = 'accepted'
+          ) as is_following,
+          EXISTS(
+            SELECT 1 FROM public.follows f 
+            WHERE f.follower_id = p.id AND f.following_id = $1 AND f.status = 'accepted'
+          ) as is_follower,
+          EXISTS(
+            SELECT 1 FROM public.follows f 
+            WHERE f.follower_id = $1 AND f.following_id = p.id AND f.status = 'pending'
+          ) as is_pending
+        FROM public.profiles p
+        WHERE p.id != $1
+          AND (lower(p.username) LIKE $2 OR lower(p.display_name) LIKE $2)
+        ORDER BY p.display_name ASC
+        LIMIT 20
+      `;
+      params = [auth.userId, `%${query}%`];
+    } else {
+      sqlQuery = `
+        SELECT DISTINCT
+          p.id,
+          p.username,
+          p.display_name,
+          p.avatar_url,
+          p.is_verified,
+          p.is_private,
+          EXISTS(
+            SELECT 1 FROM public.follows f 
+            WHERE f.follower_id = $1 AND f.following_id = p.id AND f.status = 'accepted'
+          ) as is_following,
+          EXISTS(
+            SELECT 1 FROM public.follows f 
+            WHERE f.follower_id = p.id AND f.following_id = $1 AND f.status = 'accepted'
+          ) as is_follower,
+          EXISTS(
+            SELECT 1 FROM public.follows f 
+            WHERE f.follower_id = $1 AND f.following_id = p.id AND f.status = 'pending'
+          ) as is_pending
+        FROM public.profiles p
+        LEFT JOIN public.follows f ON (f.follower_id = $1 AND f.following_id = p.id) OR (f.follower_id = p.id AND f.following_id = $1)
+        WHERE p.id != $1
+        ORDER BY p.display_name ASC
+        LIMIT 20
+      `;
+      params = [auth.userId];
+    }
+
+    const res = await p.query(sqlQuery, params);
+
+    const candidates = res.rows.map((row) => {
+      // User can be messaged if they are public OR if current user is an accepted follower OR if target follows current user
+      const canMessage = !row.is_private || row.is_following || row.is_follower;
+      return {
+        id: row.id,
+        username: row.username,
+        displayName: row.display_name,
+        avatarUrl: row.avatar_url,
+        isVerified: row.is_verified,
+        isPrivate: row.is_private,
+        isFollowing: row.is_following,
+        isFollower: row.is_follower,
+        isPending: row.is_pending,
+        canMessage,
+      };
+    });
+
+    return c.json({ success: true, candidates });
+  } catch (err: any) {
+    console.error("Candidates error:", err);
+    return c.json({ success: false, error: err.message || "Error al buscar usuarios" }, 500);
+  }
+});
+
+// Upload chat attachment image
+app.post("/api/chats/upload-image", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.parseBody();
+    const file = body["file"];
+    if (!file || typeof file === "string") {
+      return c.json({ success: false, error: "No se proporcionó ningún archivo" }, 400);
+    }
+
+    const buffer = Buffer.from(await (file as File).arrayBuffer());
+    const ext = (file as File).name?.split(".").pop() || "jpg";
+    const key = `chats/${auth.userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+
+    const s3 = getS3();
+    const bucketName = process.env.AWS_BUCKET_POSTS || "posts";
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+        Body: buffer,
+        ContentType: (file as File).type || "image/jpeg",
+      })
+    );
+
+    const publicUrl = `/api/posts/media/${encodeURIComponent(key)}`;
+    return c.json({ success: true, imageUrl: publicUrl, key });
+  } catch (err: any) {
+    console.error("Upload chat image error:", err);
+    return c.json({ success: false, error: err.message || "Error al subir la imagen" }, 500);
+  }
+});
+
 export default app;
