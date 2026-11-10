@@ -22,6 +22,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Uint8List? _newImageBytes;
   String? _newImageFilename;
   bool _removeAvatar = false;
+
+  Uint8List? _newBannerBytes;
+  String? _newBannerFilename;
+  bool _removeBanner = false;
+
   bool _isLoading = false;
 
   @override
@@ -60,6 +65,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error al seleccionar imagen: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
+  Future<void> _pickBanner(ImageSource source) async {
+    try {
+      final XFile? file = await _picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1920,
+        maxHeight: 1080,
+      );
+
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        setState(() {
+          _newBannerBytes = bytes;
+          _newBannerFilename = file.name;
+          _removeBanner = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al seleccionar portada: $e'),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -186,6 +219,126 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
+  void _showBannerSourcePicker() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        final hasActiveBanner = (_newBannerBytes != null ||
+            (widget.profile.bannerUrl != null &&
+                widget.profile.bannerUrl!.isNotEmpty &&
+                !_removeBanner));
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Banner de portada',
+                  style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Elegí una imagen de tu dispositivo para personalizar tu portada.',
+                  style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 20),
+
+                // Option: Gallery
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.image_rounded, color: colorScheme.onPrimaryContainer),
+                  ),
+                  title: const Text('Elegir de la galería', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Seleccionar una imagen horizontal de tu galería'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickBanner(ImageSource.gallery);
+                  },
+                ),
+                const SizedBox(height: 8),
+
+                // Option: Camera
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.camera_alt_rounded, color: colorScheme.onPrimaryContainer),
+                  ),
+                  title: const Text('Tomar foto', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Abrir la cámara para sacar una nueva portada'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickBanner(ImageSource.camera);
+                  },
+                ),
+
+                // Option: Remove current banner
+                if (hasActiveBanner) ...[
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: colorScheme.errorContainer,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.delete_outline_rounded, color: colorScheme.error),
+                    ),
+                    title: Text(
+                      'Eliminar banner de portada',
+                      style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.error),
+                    ),
+                    subtitle: const Text('Restablecer a la portada predeterminada'),
+                    onTap: () {
+                      setState(() {
+                        _newBannerBytes = null;
+                        _newBannerFilename = null;
+                        _removeBanner = true;
+                      });
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -196,8 +349,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     try {
       String? finalAvatarUrl = widget.profile.avatarUrl;
+      String? finalBannerUrl = widget.profile.bannerUrl;
 
-      // 1. Upload new image from device if selected
+      // 1. Upload new avatar from device if selected
       if (_newImageBytes != null) {
         final uploadResponse = await AuthService().uploadAvatar(
           _newImageBytes!,
@@ -209,7 +363,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(uploadResponse.error ?? 'Error al subir la imagen al servidor'),
+              content: Text(uploadResponse.error ?? 'Error al subir la imagen de perfil al servidor'),
               backgroundColor: Theme.of(context).colorScheme.error,
             ),
           );
@@ -221,11 +375,36 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         finalAvatarUrl = null;
       }
 
-      // 2. Update display name and bio
+      // 2. Upload new banner from device if selected
+      if (_newBannerBytes != null) {
+        final bannerUploadResponse = await AuthService().uploadBanner(
+          _newBannerBytes!,
+          filename: _newBannerFilename ?? 'banner.jpg',
+        );
+
+        if (!bannerUploadResponse.success) {
+          if (!mounted) return;
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(bannerUploadResponse.error ?? 'Error al subir el banner de portada al servidor'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+          return;
+        }
+
+        finalBannerUrl = bannerUploadResponse.profile?.bannerUrl;
+      } else if (_removeBanner) {
+        finalBannerUrl = null;
+      }
+
+      // 3. Update display name, bio, avatar and banner on Neon
       final updateResponse = await AuthService().updateProfile(
         displayName: newDisplayName,
         bio: newBio.isNotEmpty ? newBio : null,
         avatarUrl: _removeAvatar ? '' : finalAvatarUrl,
+        bannerUrl: _removeBanner ? '' : finalBannerUrl,
       );
 
       if (!mounted) return;
@@ -269,6 +448,55 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       return NetworkImage(widget.profile.avatarUrl!);
     }
     return null;
+  }
+
+  Widget _buildBannerContent(ColorScheme colorScheme) {
+    if (_newBannerBytes != null) {
+      return Image.memory(
+        _newBannerBytes!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: 130,
+      );
+    }
+    if (!_removeBanner && widget.profile.bannerUrl != null && widget.profile.bannerUrl!.isNotEmpty) {
+      return Image.network(
+        widget.profile.bannerUrl!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: 130,
+        errorBuilder: (context, error, stackTrace) => _buildDefaultBannerArt(colorScheme),
+      );
+    }
+    if (!_removeBanner) {
+      return Image.network(
+        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: 130,
+        errorBuilder: (context, error, stackTrace) => _buildDefaultBannerArt(colorScheme),
+      );
+    }
+    return _buildDefaultBannerArt(colorScheme);
+  }
+
+  Widget _buildDefaultBannerArt(ColorScheme colorScheme) {
+    return Container(
+      height: 130,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF1E2230),
+            colorScheme.primary.withValues(alpha: 0.15),
+            const Color(0xFF12131A),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+    );
   }
 
   @override
@@ -323,40 +551,77 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             Stack(
               clipBehavior: Clip.none,
               children: [
-                // Modern Banner background
-                Container(
-                  height: 130,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest,
-                    gradient: LinearGradient(
-                      colors: [
-                        const Color(0xFF1E2230),
-                        colorScheme.primary.withValues(alpha: 0.15),
-                        const Color(0xFF12131A),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                // Modern Banner background with tap handler
+                GestureDetector(
+                  onTap: _showBannerSourcePicker,
+                  child: Container(
+                    height: 130,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      gradient: LinearGradient(
+                        colors: [
+                          const Color(0xFF1E2230),
+                          colorScheme.primary.withValues(alpha: 0.15),
+                          const Color(0xFF12131A),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                     ),
-                  ),
-                  child: Image.network(
-                    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => const SizedBox(),
+                    child: _buildBannerContent(colorScheme),
                   ),
                 ),
                 Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.black.withValues(alpha: 0.2),
-                          Colors.black.withValues(alpha: 0.6),
-                          colorScheme.surface,
-                        ],
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        stops: const [0.0, 0.7, 1.0],
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.black.withValues(alpha: 0.2),
+                            Colors.black.withValues(alpha: 0.6),
+                            colorScheme.surface,
+                          ],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0.0, 0.7, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // Edit Banner Pill Button on Top Right
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _showBannerSourcePicker,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.65),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white24, width: 1),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.camera_alt_outlined, size: 15, color: Colors.white),
+                            SizedBox(width: 6),
+                            Text(
+                              'Editar portada',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -436,14 +701,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Change photo button
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.photo_camera_back_outlined, size: 18),
-                      label: const Text('Cambiar foto de perfil'),
-                      onPressed: _showImageSourcePicker,
-                      style: OutlinedButton.styleFrom(
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      ),
+                    // Change photo and change banner buttons
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.person_outline_rounded, size: 18),
+                          label: const Text('Cambiar foto'),
+                          onPressed: _showImageSourcePicker,
+                          style: OutlinedButton.styleFrom(
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.image_outlined, size: 18),
+                          label: const Text('Cambiar portada'),
+                          onPressed: _showBannerSourcePicker,
+                          style: OutlinedButton.styleFrom(
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 24),
 

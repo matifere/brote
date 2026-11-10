@@ -14,6 +14,7 @@ export default defineConfig({
     // "private" is the default; use "public_read" for anonymous reads
     assets: { access: "private" },
     avatars: { access: "public_read" },
+    banners: { access: "public_read" },
   },
   // Branch policy: per-branch tuning
   branch: (branch) => {

@@ -302,11 +302,12 @@ class AuthService {
     return _currentUser;
   }
 
-  /// Updates display name, bio description, and avatar URL on Neon Cloud
+  /// Updates display name, bio description, avatar URL, and banner URL on Neon Cloud
   Future<AuthResponse> updateProfile({
     required String displayName,
     String? bio,
     String? avatarUrl,
+    String? bannerUrl,
   }) async {
     final token = _sessionToken;
     if (token == null) {
@@ -326,6 +327,7 @@ class AuthService {
               'displayName': displayName.trim(),
               'bio': bio?.trim(),
               'avatarUrl': avatarUrl?.trim(),
+              'bannerUrl': bannerUrl?.trim(),
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -381,6 +383,46 @@ class AuthService {
         return AuthResponse.success(token: token, profile: _currentUser!);
       } else {
         final error = data['error'] as String? ?? 'Error al subir la imagen al servidor';
+        return AuthResponse.failure(error);
+      }
+    } catch (e) {
+      return AuthResponse.failure('Error al conectar con el servidor: $e');
+    }
+  }
+
+  /// Uploads user banner cover image from device to Neon server
+  Future<AuthResponse> uploadBanner(
+    List<int> imageBytes, {
+    String filename = 'banner.jpg',
+  }) async {
+    final token = _sessionToken;
+    if (token == null) {
+      return AuthResponse.failure('Sesión no encontrada. Iniciá sesión nuevamente.');
+    }
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/profile/banner');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..files.add(http.MultipartFile.fromBytes(
+          'file',
+          imageBytes,
+          filename: filename,
+        ));
+
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamedResponse);
+      final Map<String, dynamic> data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        final profileMap = data['profile'] as Map<String, dynamic>;
+        _currentUser = UserProfile.fromJson(profileMap, email: _currentUser?.email);
+        currentUserNotifier.value = _currentUser;
+        await SessionStorage.save(token: token, profile: _currentUser!.toJson());
+
+        return AuthResponse.success(token: token, profile: _currentUser!);
+      } else {
+        final error = data['error'] as String? ?? 'Error al subir el banner al servidor';
         return AuthResponse.failure(error);
       }
     } catch (e) {

@@ -130,6 +130,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     final bio = _currentProfile.bio ??
         'Creador de contenido & fotografía. Apasionado por la tecnología, la música y el diseño. Conectando todos los días.';
     final avatarUrl = _currentProfile.avatarUrl;
+    final bannerUrl = _currentProfile.bannerUrl;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
@@ -196,11 +197,17 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                             end: Alignment.bottomRight,
                           ),
                         ),
-                        child: Image.network(
-                          'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => const SizedBox(),
-                        ),
+                        child: (bannerUrl != null && bannerUrl.isNotEmpty)
+                            ? Image.network(
+                                bannerUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => const SizedBox(),
+                              )
+                            : Image.network(
+                                'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => const SizedBox(),
+                              ),
                       ),
                       // Gradient overlay to blend smoothly into surface
                       Positioned.fill(

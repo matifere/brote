@@ -47,10 +47,12 @@ void main() {
     expect(find.text('Nombre'), findsOneWidget);
     expect(find.text('Biografía / Descripción'), findsOneWidget);
     expect(find.text('Guardar'), findsOneWidget);
-    expect(find.text('Cambiar foto de perfil'), findsOneWidget);
+    expect(find.text('Cambiar foto'), findsOneWidget);
+    expect(find.text('Cambiar portada'), findsOneWidget);
+    expect(find.text('Editar portada'), findsOneWidget);
   });
 
-  testWidgets('EditProfileScreen allows editing fields and opens avatar picker', (WidgetTester tester) async {
+  testWidgets('EditProfileScreen allows editing fields and opens avatar and banner pickers', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() {
@@ -70,10 +72,22 @@ void main() {
     expect(find.widgetWithText(TextFormField, '@mati'), findsOneWidget);
 
     // Open avatar picker
-    await tester.tap(find.text('Cambiar foto de perfil'));
+    await tester.tap(find.text('Cambiar foto'));
     await tester.pumpAndSettle();
 
     expect(find.text('Foto de perfil'), findsOneWidget);
+    expect(find.text('Elegir de la galería'), findsOneWidget);
+    expect(find.text('Tomar foto'), findsOneWidget);
+
+    // Close avatar bottom sheet
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    // Open banner picker
+    await tester.tap(find.text('Cambiar portada'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Banner de portada'), findsOneWidget);
     expect(find.text('Elegir de la galería'), findsOneWidget);
     expect(find.text('Tomar foto'), findsOneWidget);
   });

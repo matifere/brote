@@ -195,7 +195,7 @@ app.post("/api/auth/login", async (c) => {
     const token = authData.token;
 
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url FROM public.profiles WHERE id = $1",
       [userId]
     );
     const profile = profileRes.rows[0] || {
@@ -204,6 +204,7 @@ app.post("/api/auth/login", async (c) => {
       display_name: authData.user.name,
       bio: null,
       avatarUrl: null,
+      bannerUrl: null,
     };
 
     return c.json({
@@ -216,6 +217,7 @@ app.post("/api/auth/login", async (c) => {
         displayName: profile.display_name,
         bio: profile.bio,
         avatarUrl: profile.avatar_url,
+        bannerUrl: profile.banner_url,
       },
     }, 200);
   } catch (err: any) {
@@ -235,7 +237,7 @@ app.get("/api/auth/me", async (c) => {
 
     const p = getPool();
     const res = await p.query(
-      `SELECT s.token, u.id, u.email, u.name, p.username, p.display_name, p.bio, p.avatar_url
+      `SELECT s.token, u.id, u.email, u.name, p.username, p.display_name, p.bio, p.avatar_url, COALESCE(p.banner_url, p.header_url) as banner_url
        FROM neon_auth.session s
        INNER JOIN neon_auth.user u ON s."userId" = u.id
        INNER JOIN public.profiles p ON u.id = p.id
@@ -259,6 +261,7 @@ app.get("/api/auth/me", async (c) => {
         displayName: row.display_name,
         bio: row.bio,
         avatarUrl: row.avatar_url,
+        bannerUrl: row.banner_url,
       },
     });
   } catch (err: any) {
@@ -299,7 +302,7 @@ app.get("/api/profile/me", async (c) => {
 
     const p = getPool();
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     if (profileRes.rows.length === 0) {
@@ -315,6 +318,7 @@ app.get("/api/profile/me", async (c) => {
         displayName: profile.display_name,
         bio: profile.bio,
         avatarUrl: profile.avatar_url,
+        bannerUrl: profile.banner_url,
       },
     });
   } catch (err: any) {
@@ -357,8 +361,14 @@ const updateProfileHandler = async (c: any) => {
       values.push(body.avatarUrl && body.avatarUrl.trim().length > 0 ? body.avatarUrl.trim() : null);
     }
 
+    if (body.bannerUrl !== undefined) {
+      updates.push(`banner_url = $${paramIndex}`, `header_url = $${paramIndex}`);
+      paramIndex++;
+      values.push(body.bannerUrl && body.bannerUrl.trim().length > 0 ? body.bannerUrl.trim() : null);
+    }
+
     values.push(auth.userId);
-    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url`;
+    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url`;
     const updateRes = await p.query(sql, values);
 
     // Keep auth user name synced
@@ -376,6 +386,7 @@ const updateProfileHandler = async (c: any) => {
         displayName: updated.display_name,
         bio: updated.bio,
         avatarUrl: updated.avatar_url,
+        bannerUrl: updated.banner_url,
       },
     });
   } catch (err: any) {
@@ -455,7 +466,7 @@ app.post("/api/profile/avatar", async (c) => {
       `UPDATE public.profiles
        SET avatar_url = $1, updated_at = now()
        WHERE id = $2
-       RETURNING id, username, display_name, bio, avatar_url`,
+       RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url`,
       [avatarUrl, auth.userId]
     );
 
@@ -470,6 +481,7 @@ app.post("/api/profile/avatar", async (c) => {
         displayName: profile.display_name,
         bio: profile.bio,
         avatarUrl: profile.avatar_url,
+        bannerUrl: profile.banner_url,
       },
     }, 200);
   } catch (err: any) {
@@ -500,13 +512,126 @@ app.get("/api/avatar/:key", async (c) => {
   }
 });
 
+// Upload banner from device to Neon Object Storage
+app.post("/api/profile/banner", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    let fileBuffer: Buffer | null = null;
+    let contentType = "image/jpeg";
+    let fileExt = "jpg";
+
+    const reqContentType = c.req.header("content-type") || "";
+
+    if (reqContentType.includes("multipart/form-data")) {
+      const body = await c.req.parseBody();
+      const file = body["file"] || body["banner"] || body["image"];
+      if (file && typeof file === "object" && "arrayBuffer" in file) {
+        const ab = await (file as any).arrayBuffer();
+        fileBuffer = Buffer.from(ab);
+        contentType = (file as any).type || "image/jpeg";
+      }
+    } else if (reqContentType.includes("application/json")) {
+      const body = await c.req.json();
+      if (body.image) {
+        const raw = body.image.replace(/^data:image\/\w+;base64,/, "");
+        fileBuffer = Buffer.from(raw, "base64");
+        contentType = body.mimeType || "image/jpeg";
+      }
+    } else if (reqContentType.startsWith("image/")) {
+      const ab = await c.req.arrayBuffer();
+      fileBuffer = Buffer.from(ab);
+      contentType = reqContentType;
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return c.json({ success: false, error: "No se recibió ninguna imagen de banner válida." }, 400);
+    }
+
+    if (contentType.includes("png")) fileExt = "png";
+    else if (contentType.includes("webp")) fileExt = "webp";
+    else if (contentType.includes("gif")) fileExt = "gif";
+    else fileExt = "jpg";
+
+    const objectKey = `${auth.userId}-${Date.now()}.${fileExt}`;
+    const s3 = getS3();
+
+    // Store in Neon Object Storage
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "banners",
+        Key: objectKey,
+        Body: fileBuffer,
+        ContentType: contentType,
+      })
+    );
+
+    const host = c.req.header("host") || "br-spring-base-betng0ba-api.compute.c-9.us-east-2.aws.neon.tech";
+    const proto = host.includes("localhost") ? "http" : "https";
+    const bannerUrl = `${proto}://${host}/api/banner/${objectKey}`;
+
+    // Update profile in PostgreSQL (setting both banner_url and header_url)
+    const p = getPool();
+    const updateRes = await p.query(
+      `UPDATE public.profiles
+       SET banner_url = $1, header_url = $1, updated_at = now()
+       WHERE id = $2
+       RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url`,
+      [bannerUrl, auth.userId]
+    );
+
+    const profile = updateRes.rows[0];
+
+    return c.json({
+      success: true,
+      bannerUrl,
+      profile: {
+        id: profile.id,
+        username: profile.username,
+        displayName: profile.display_name,
+        bio: profile.bio,
+        avatarUrl: profile.avatar_url,
+        bannerUrl: profile.banner_url,
+      },
+    }, 200);
+  } catch (err: any) {
+    console.error("Banner upload error:", err);
+    return c.json({ success: false, error: err.message || "Error al subir el banner" }, 500);
+  }
+});
+
+// Serve banner image from Neon Object Storage
+app.get("/api/banner/:key", async (c) => {
+  try {
+    const key = c.req.param("key");
+    const s3 = getS3();
+    const res = await s3.send(
+      new GetObjectCommand({
+        Bucket: "banners",
+        Key: key,
+      })
+    );
+    const body = await res.Body?.transformToByteArray();
+    if (!body) return c.text("Banner not found", 404);
+    return c.body(body, 200, {
+      "Content-Type": res.ContentType || "image/jpeg",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    });
+  } catch (err: any) {
+    return c.text("Banner not found", 404);
+  }
+});
+
 // Read any user profile by username
 app.get("/api/profile/:username", async (c) => {
   try {
     const username = c.req.param("username").toLowerCase();
     const p = getPool();
     const res = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url FROM public.profiles WHERE lower(username) = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url FROM public.profiles WHERE lower(username) = $1",
       [username]
     );
     if (res.rows.length === 0) {
@@ -521,6 +646,7 @@ app.get("/api/profile/:username", async (c) => {
         displayName: row.display_name,
         bio: row.bio,
         avatarUrl: row.avatar_url,
+        bannerUrl: row.banner_url,
       },
     });
   } catch (err: any) {

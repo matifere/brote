@@ -4,6 +4,7 @@ class UserProfile {
   final String displayName;
   final String? bio;
   final String? avatarUrl;
+  final String? bannerUrl;
   final String? email;
 
   const UserProfile({
@@ -12,6 +13,7 @@ class UserProfile {
     required this.displayName,
     this.bio,
     this.avatarUrl,
+    this.bannerUrl,
     this.email,
   });
 
@@ -22,6 +24,7 @@ class UserProfile {
       displayName: json['displayName'] as String? ?? json['display_name'] as String? ?? json['username'] as String,
       bio: json['bio'] as String?,
       avatarUrl: json['avatarUrl'] as String? ?? json['avatar_url'] as String?,
+      bannerUrl: json['bannerUrl'] as String? ?? json['banner_url'] as String? ?? json['header_url'] as String?,
       email: email,
     );
   }
@@ -33,6 +36,7 @@ class UserProfile {
       'displayName': displayName,
       'bio': bio,
       'avatarUrl': avatarUrl,
+      'bannerUrl': bannerUrl,
       'email': email,
     };
   }
@@ -43,6 +47,7 @@ class UserProfile {
     String? displayName,
     String? bio,
     String? avatarUrl,
+    String? bannerUrl,
     String? email,
   }) {
     return UserProfile(
@@ -51,6 +56,7 @@ class UserProfile {
       displayName: displayName ?? this.displayName,
       bio: bio ?? this.bio,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      bannerUrl: bannerUrl ?? this.bannerUrl,
       email: email ?? this.email,
     );
   }
