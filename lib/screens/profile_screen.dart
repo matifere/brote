@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../widgets/brote_logo.dart';
 import 'auth_screen.dart';
 import 'feed_screen.dart';
 
@@ -107,9 +108,24 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         headerSliverBuilder: (context, innerBoxIsScrolled) {
           return [
             SliverAppBar(
-              expandedHeight: 180,
-              pinned: true,
+              pinned: false,
+              floating: true,
+              elevation: 0,
+              scrolledUnderElevation: 0,
               backgroundColor: colorScheme.surface,
+              title: Row(
+                children: [
+                  const BroteLogo(size: 28, useDarkSquircle: true),
+                  const SizedBox(width: 8),
+                  Text(
+                    'brote',
+                    style: textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
               actions: [
                 IconButton(
                   tooltip: 'Compartir perfil',
@@ -126,98 +142,138 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   onPressed: _handleLogout,
                 ),
               ],
-              flexibleSpace: FlexibleSpaceBar(
-                background: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // Header Banner
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            colorScheme.primaryContainer,
-                            colorScheme.secondaryContainer,
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                      ),
-                      child: Opacity(
-                        opacity: 0.12,
-                        child: Icon(Icons.eco_rounded, size: 240, color: colorScheme.primary),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Avatar and Edit Button Row
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Transform.translate(
-                          offset: const Offset(0, -32),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: colorScheme.surface, width: 4),
-                            ),
-                            child: CircleAvatar(
-                              radius: 40,
-                              backgroundColor: colorScheme.primary,
-                              child: Text(
-                                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                                style: TextStyle(
-                                  color: colorScheme.onPrimary,
-                                  fontSize: 32,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Cover Banner with Avatar overlapping
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      // Modern Cover Banner with Dark Gradient / Studio aesthetic
+                      Container(
+                        height: 140,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          gradient: LinearGradient(
+                            colors: [
+                              const Color(0xFF1E2230),
+                              colorScheme.primary.withValues(alpha: 0.15),
+                              const Color(0xFF12131A),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        child: Image.network(
+                          'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => const SizedBox(),
+                        ),
+                      ),
+                      // Gradient overlay to blend smoothly into surface
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.black.withValues(alpha: 0.15),
+                                Colors.black.withValues(alpha: 0.55),
+                                colorScheme.surface,
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              stops: const [0.0, 0.7, 1.0],
                             ),
                           ),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Row(
-                            children: [
-                              OutlinedButton(
-                                onPressed: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Editor de perfil próximamente.')),
-                                  );
-                                },
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                ),
-                                child: const Text('Editar perfil'),
+                      ),
+                      // Avatar positioned overlapping the bottom of the banner
+                      Positioned(
+                        left: 16,
+                        bottom: -36,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: colorScheme.surface, width: 4),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.35),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
                               ),
                             ],
                           ),
+                          child: CircleAvatar(
+                            radius: 40,
+                            backgroundColor: colorScheme.primary,
+                            child: Text(
+                              displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                              style: TextStyle(
+                                color: colorScheme.onPrimary,
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                         ),
-                      ],
-                    ),
-
-                    // User Identity
-                    Text(
-                      displayName,
-                      style: textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: colorScheme.onSurface,
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '@$username',
-                      style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-                    ),
+                    ],
+                  ),
+
+                  // Actions row below banner (Edit Profile on right) + Identity
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, right: 16, top: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            OutlinedButton(
+                              onPressed: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Editor de perfil próximamente.')),
+                                );
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                                side: BorderSide(color: colorScheme.outlineVariant),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              ),
+                              child: Text(
+                                'Editar perfil',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+
+                        // User Identity
+                        Row(
+                          children: [
+                            Text(
+                              displayName,
+                              style: textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(Icons.verified, size: 20, color: colorScheme.primary),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '@$username',
+                          style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                        ),
                     const SizedBox(height: 12),
 
                     // Bio
@@ -244,7 +300,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   ],
                 ),
               ),
-            ),
+            ],
+          ),
+        ),
             SliverPersistentHeader(
               pinned: true,
               delegate: _SliverAppBarDelegate(
