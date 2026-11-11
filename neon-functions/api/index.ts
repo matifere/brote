@@ -350,6 +350,7 @@ async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | 
     avatarUrl: profileRow.avatar_url,
     bannerUrl: profileRow.banner_url,
     isPrivate,
+    isVerified: Boolean(profileRow.is_verified),
     followersCount,
     followingCount,
     pendingRequestsCount,
@@ -369,7 +370,7 @@ app.get("/api/profile/me", async (c) => {
 
     const p = getPool();
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     if (profileRes.rows.length === 0) {
@@ -433,7 +434,7 @@ const updateProfileHandler = async (c: any) => {
     }
 
     values.push(auth.userId);
-    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private`;
+    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified`;
     const updateRes = await p.query(sql, values);
 
     // Keep auth user name synced
@@ -693,7 +694,7 @@ app.get("/api/profiles/search", async (c) => {
 
     const p = getPool();
     const res = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        WHERE lower(username) LIKE $1 OR lower(display_name) LIKE $1
        ORDER BY
@@ -715,6 +716,7 @@ app.get("/api/profiles/search", async (c) => {
       avatarUrl: row.avatar_url,
       bannerUrl: row.banner_url,
       isPrivate: Boolean(row.is_private),
+      isVerified: Boolean(row.is_verified),
     }));
 
     return c.json({ success: true, results });
@@ -728,7 +730,7 @@ app.get("/api/profiles/suggested", async (c) => {
   try {
     const p = getPool();
     const res = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        ORDER BY updated_at DESC NULLS LAST, created_at DESC
        LIMIT 10`
@@ -742,6 +744,7 @@ app.get("/api/profiles/suggested", async (c) => {
       avatarUrl: row.avatar_url,
       bannerUrl: row.banner_url,
       isPrivate: Boolean(row.is_private),
+      isVerified: Boolean(row.is_verified),
     }));
 
     return c.json({ success: true, results });
@@ -757,7 +760,7 @@ app.get("/api/profile/:username", async (c) => {
     const auth = await getAuthenticatedUser(c);
     const p = getPool();
     const res = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE lower(username) = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE lower(username) = $1",
       [username]
     );
     if (res.rows.length === 0) {
@@ -785,7 +788,7 @@ app.post("/api/profile/:target/follow", async (c) => {
     const p = getPool();
 
     const targetRes = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        WHERE id::text = $1 OR lower(username) = lower($1)
        LIMIT 1`,
@@ -842,7 +845,7 @@ app.post("/api/profile/:target/unfollow", async (c) => {
     const p = getPool();
 
     const targetRes = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        WHERE id::text = $1 OR lower(username) = lower($1)
        LIMIT 1`,
@@ -938,7 +941,7 @@ app.post("/api/profile/follow-requests/:followerId/accept", async (c) => {
     await notify(p, { recipientId: followerId, actorId: auth.userId, type: "follow_accepted" });
 
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
@@ -978,7 +981,7 @@ app.post("/api/profile/follow-requests/:followerId/reject", async (c) => {
     await clearNotification(p, { recipientId: auth.userId, actorId: followerId, type: "follow_request" });
 
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
@@ -1132,7 +1135,7 @@ app.post("/api/posts", async (c) => {
 
     // Fetch author profile
     const authorRes = await p.query(
-      "SELECT id, username, display_name, avatar_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, avatar_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const author = authorRes.rows[0];
@@ -1145,7 +1148,7 @@ app.post("/api/posts", async (c) => {
         authorName: author?.display_name || author?.username || "Usuario",
         authorUsername: author?.username || "usuario",
         authorAvatarUrl: author?.avatar_url,
-        isVerified: true,
+        isVerified: Boolean(author?.is_verified),
         content: postRow.content || "",
         imageUrl: postRow.image_url,
         likesCount: postRow.likes_count || 0,
@@ -1161,6 +1164,20 @@ app.post("/api/posts", async (c) => {
   }
 });
 
+// Posts can be marked to last 24 hours: the app adds a last line "⏳ 24 h" (see its PostContent).
+// Expired ones are hidden from every listing and deleted at most once an hour.
+// COALESCE: image-only posts have no content, and NULL would hide them from every listing
+const EXPIRED_POST = `(COALESCE(p.content, '') ~ '(^|\\n)⏳ 24 h$' AND p.created_at < now() - interval '24 hours')`;
+const NOT_EXPIRED_POST = `NOT ${EXPIRED_POST}`;
+let lastExpiredPurge = 0;
+function purgeExpiredPosts(p: Pool): void {
+  if (Date.now() - lastExpiredPurge < 60 * 60 * 1000) return;
+  lastExpiredPurge = Date.now();
+  p.query(`DELETE FROM public.posts p WHERE ${EXPIRED_POST}`).catch((err) => {
+    console.error("Expired posts purge error:", err.message);
+  });
+}
+
 // Helper for formatting post rows
 function mapPostRow(row: any) {
   return {
@@ -1169,7 +1186,7 @@ function mapPostRow(row: any) {
     authorName: row.author_name || row.author_username || "Usuario",
     authorUsername: row.author_username || "usuario",
     authorAvatarUrl: row.author_avatar_url,
-    isVerified: true,
+    isVerified: Boolean(row.author_is_verified),
     content: row.content || "",
     imageUrl: row.image_url || null,
     likesCount: Number(row.likes_count || 0),
@@ -1188,6 +1205,7 @@ app.get("/api/posts/feed", async (c) => {
     const viewerId = auth?.userId || null;
     const filter = c.req.query("filter"); // "following", "reviews" or undefined
     const p = getPool();
+    purgeExpiredPosts(p);
 
     if (filter === "following") {
       if (!viewerId) {
@@ -1207,11 +1225,13 @@ app.get("/api/posts/feed", async (c) => {
           pr.display_name as author_name,
           pr.avatar_url as author_avatar_url,
           pr.is_private as author_is_private,
+          pr.is_verified as author_is_verified,
           EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid) as is_liked,
           true as is_following_author
         FROM public.posts p
         INNER JOIN public.profiles pr ON p.author_id = pr.id
         INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
+        WHERE ${NOT_EXPIRED_POST}
         ORDER BY p.created_at DESC
         LIMIT 50;
       `;
@@ -1236,6 +1256,7 @@ app.get("/api/posts/feed", async (c) => {
         pr.display_name as author_name,
         pr.avatar_url as author_avatar_url,
         pr.is_private as author_is_private,
+        pr.is_verified as author_is_verified,
         ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid)) as is_liked,
         ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')) as is_following_author
       FROM public.posts p
@@ -1248,6 +1269,7 @@ app.get("/api/posts/feed", async (c) => {
              )))
         -- "reviews": posts whose first line is a movie or music review (see the app's PostContent)
         AND ($2::boolean = false OR p.content ~ '^(🎬|🎵) ')
+        AND ${NOT_EXPIRED_POST}
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -1287,11 +1309,13 @@ app.get("/api/posts/following", async (c) => {
         pr.display_name as author_name,
         pr.avatar_url as author_avatar_url,
         pr.is_private as author_is_private,
+        pr.is_verified as author_is_verified,
         EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid) as is_liked,
         true as is_following_author
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
       INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
+      WHERE ${NOT_EXPIRED_POST}
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -1361,10 +1385,11 @@ app.get("/api/posts/user/:target", async (c) => {
         pr.display_name as author_name,
         pr.avatar_url as author_avatar_url,
         pr.is_private as author_is_private,
+        pr.is_verified as author_is_verified,
         ($2::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $2::uuid)) as is_liked
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
-      WHERE p.author_id = $1
+      WHERE p.author_id = $1 AND ${NOT_EXPIRED_POST}
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -2181,9 +2206,206 @@ app.get("/api/keys/:userId", async (c) => {
   }
 });
 
-// In-app notifications: likes, follows, follow requests (and their acceptance) and messages.
+// Comments on posts (public.post_comments from the initial migration)
+let postCommentsTable: Promise<void> | null = null;
+function ensurePostCommentsTable(p: Pool): Promise<void> {
+  if (!postCommentsTable) {
+    postCommentsTable = p
+      .query(
+        `CREATE TABLE IF NOT EXISTS public.post_comments (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           post_id UUID NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+           author_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+           content TEXT NOT NULL,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+         );
+         CREATE INDEX IF NOT EXISTS idx_post_comments_post_id ON public.post_comments (post_id, created_at ASC);`
+      )
+      .then(() => undefined)
+      .catch((err) => {
+        postCommentsTable = null;
+        throw err;
+      });
+  }
+  return postCommentsTable;
+}
+
+// The post's author when the viewer can see it (public author, the author, or an accepted follower)
+async function visiblePostAuthor(p: Pool, postId: string, viewerId: string): Promise<string | null> {
+  const res = await p.query(
+    `SELECT p.author_id, pr.is_private,
+            EXISTS(SELECT 1 FROM public.follows f
+                   WHERE f.follower_id = $2::uuid AND f.following_id = p.author_id AND f.status = 'accepted') AS follows
+     FROM public.posts p
+     INNER JOIN public.profiles pr ON pr.id = p.author_id
+     WHERE p.id::text = $1 AND ${NOT_EXPIRED_POST}`,
+    [postId, viewerId]
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  if (row.is_private && row.author_id !== viewerId && !row.follows) return null;
+  return row.author_id;
+}
+
+function mapCommentRow(row: any) {
+  return {
+    id: row.id,
+    postId: row.post_id,
+    content: row.content,
+    createdAt: row.created_at,
+    author: {
+      id: row.author_id,
+      username: row.username,
+      displayName: row.display_name,
+      avatarUrl: row.avatar_url,
+    },
+  };
+}
+
+app.get("/api/posts/:id/comments", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const postId = c.req.param("id");
+    const p = getPool();
+    await ensurePostCommentsTable(p);
+    if (!(await visiblePostAuthor(p, postId, auth.userId))) {
+      return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+
+    const res = await p.query(
+      `SELECT cm.id, cm.post_id, cm.content, cm.created_at, cm.author_id, pr.username, pr.display_name, pr.avatar_url
+       FROM public.post_comments cm
+       INNER JOIN public.profiles pr ON pr.id = cm.author_id
+       WHERE cm.post_id = $1
+       ORDER BY cm.created_at ASC
+       LIMIT 200`,
+      [postId]
+    );
+    return c.json({ success: true, comments: res.rows.map(mapCommentRow) });
+  } catch (err: any) {
+    console.error("Get comments error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener los comentarios" }, 500);
+  }
+});
+
+app.post("/api/posts/:id/comments", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const content = typeof body.content === "string" ? body.content.trim() : "";
+    if (!content) {
+      return c.json({ success: false, error: "El comentario no puede estar vacío." }, 400);
+    }
+    if (content.length > 500) {
+      return c.json({ success: false, error: "El comentario no puede superar los 500 caracteres." }, 400);
+    }
+
+    const postId = c.req.param("id");
+    const p = getPool();
+    await ensurePostCommentsTable(p);
+    const authorId = await visiblePostAuthor(p, postId, auth.userId);
+    if (!authorId) {
+      return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+
+    const inserted = await p.query(
+      `INSERT INTO public.post_comments (post_id, author_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [postId, auth.userId, content]
+    );
+    const countRes = await p.query(
+      "UPDATE public.posts SET comments_count = comments_count + 1 WHERE id = $1 RETURNING comments_count",
+      [postId]
+    );
+    await notify(p, { recipientId: authorId, actorId: auth.userId, type: "comment", postId });
+
+    const commentRes = await p.query(
+      `SELECT cm.id, cm.post_id, cm.content, cm.created_at, cm.author_id, pr.username, pr.display_name, pr.avatar_url
+       FROM public.post_comments cm
+       INNER JOIN public.profiles pr ON pr.id = cm.author_id
+       WHERE cm.id = $1`,
+      [inserted.rows[0].id]
+    );
+    return c.json({
+      success: true,
+      comment: mapCommentRow(commentRes.rows[0]),
+      commentsCount: countRes.rows[0]?.comments_count ?? 0,
+    });
+  } catch (err: any) {
+    console.error("Create comment error:", err);
+    return c.json({ success: false, error: err.message || "Error al comentar" }, 500);
+  }
+});
+
+// The comment's author or the post's author can delete a comment
+app.delete("/api/posts/:id/comments/:commentId", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const postId = c.req.param("id");
+    const p = getPool();
+    await ensurePostCommentsTable(p);
+    const res = await p.query(
+      `DELETE FROM public.post_comments cm
+       USING public.posts po
+       WHERE cm.id::text = $1 AND cm.post_id::text = $2 AND po.id = cm.post_id
+         AND (cm.author_id = $3 OR po.author_id = $3)
+       RETURNING cm.post_id`,
+      [c.req.param("commentId"), postId, auth.userId]
+    );
+    if (res.rows.length === 0) {
+      return c.json({ success: false, error: "Comentario no encontrado" }, 404);
+    }
+
+    const countRes = await p.query(
+      "UPDATE public.posts SET comments_count = GREATEST(0, comments_count - 1) WHERE id = $1 RETURNING comments_count",
+      [res.rows[0].post_id]
+    );
+    return c.json({ success: true, commentsCount: countRes.rows[0]?.comments_count ?? 0 });
+  } catch (err: any) {
+    console.error("Delete comment error:", err);
+    return c.json({ success: false, error: err.message || "Error al borrar el comentario" }, 500);
+  }
+});
+
+// Delete own post (likes, comments, media rows and notifications go with it)
+app.delete("/api/posts/:id", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    const res = await p.query(
+      "DELETE FROM public.posts WHERE id::text = $1 AND author_id = $2 RETURNING id",
+      [c.req.param("id"), auth.userId]
+    );
+    if (res.rows.length === 0) {
+      return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("Delete post error:", err);
+    return c.json({ success: false, error: err.message || "Error al borrar la publicación" }, 500);
+  }
+});
+
+// In-app notifications: likes, comments, follows, follow requests (and their acceptance) and messages.
 // Message notifications never include the content, which can be end-to-end encrypted.
-type NotificationType = "like" | "follow" | "follow_request" | "follow_accepted" | "message";
+type NotificationType = "like" | "comment" | "follow" | "follow_request" | "follow_accepted" | "message";
 
 interface NotificationEvent {
   recipientId: string;
