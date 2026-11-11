@@ -129,7 +129,7 @@ void main() {
     final server = fakeServer(hasKeyEndpoints: true, sent: sent);
     await openChat(tester, server);
 
-    expect(find.textContaining('Ingresá tu contraseña de chat'), findsOneWidget);
+    expect(find.textContaining('Ingresá la contraseña de tu cuenta'), findsOneWidget);
     expect(find.text('Mensaje cifrado'), findsOneWidget);
 
     await http.runWithClient(() async {
@@ -179,6 +179,35 @@ void main() {
     expect(find.text('Contraseña incorrecta.'), findsOneWidget);
     expect(find.text('Mensaje cifrado'), findsOneWidget);
     expect(find.text('Hola, esto viaja cifrado'), findsNothing);
+
+    await closeChat(tester);
+  });
+
+  testWidgets('logging in with account password unlocks chats automatically without any prompts', (tester) async {
+    final server = fakeServer(hasKeyEndpoints: true);
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await http.runWithClient(() async {
+      // Simulate login on a new device where only account credentials are typed
+      await AuthService().tryAutoLogin();
+      await ChatCrypto().onAccountLogin(_password);
+      await tester.pumpWidget(
+        const MaterialApp(home: ChatConversationScreen(conversationId: 'conv-1', otherParticipant: _other)),
+      );
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+      await tester.pumpAndSettle();
+    }, () => server);
+
+    // Messages are immediately decrypted and no password prompt or unlock button is shown
+    expect(find.text('Hola, esto viaja cifrado'), findsOneWidget);
+    expect(find.text('Mensaje cifrado'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Desbloquear'), findsNothing);
+    expect(find.textContaining('Cifrado de punta a punta'), findsOneWidget);
 
     await closeChat(tester);
   });

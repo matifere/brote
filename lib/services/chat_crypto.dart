@@ -221,7 +221,7 @@ class ChatCrypto {
   factory ChatCrypto() => _instance;
   ChatCrypto._internal();
 
-  static const int minPasswordLength = 8;
+  static const int minPasswordLength = 6;
   static const Duration _missingKeyRetry = Duration(minutes: 1);
 
   final ValueNotifier<ChatCryptoStatus> status = ValueNotifier(ChatCryptoStatus.checking);
@@ -272,6 +272,50 @@ class ChatCrypto {
     final bundle = data['keyBundle'];
     _bundle = bundle is Map<String, dynamic> ? ChatKeyBundle.fromJson(bundle) : null;
     status.value = _bundle == null ? ChatCryptoStatus.needsSetup : ChatCryptoStatus.locked;
+  }
+
+  /// Sets up or unlocks chat keys transparently using the user's account password.
+  Future<void> onAccountLogin(String password) async {
+    final user = AuthService().currentUser;
+    if (user == null || AuthService().sessionToken == null) return;
+    _userId = user.id;
+
+    // Check if this device already has the decrypted key cached locally
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getString(_storageKey);
+    if (stored != null) {
+      try {
+        _keyPair = await ChatCipher.keyPairFromPrivateKey(base64Decode(stored));
+        status.value = ChatCryptoStatus.ready;
+        return;
+      } catch (e) {
+        debugPrint('Failed to load stored chat key: $e');
+      }
+    }
+
+    // New device or first-time setup: check the server for existing keys
+    final data = await _request('GET', '/api/keys/me');
+    if (data == null) {
+      status.value = ChatCryptoStatus.unavailable;
+      return;
+    }
+
+    final bundleJson = data['keyBundle'];
+    if (bundleJson is Map<String, dynamic>) {
+      // User already has backed up keys on server: unwrap with account password
+      final bundle = ChatKeyBundle.fromJson(bundleJson);
+      _bundle = bundle;
+      final keyPair = await ChatCipher.unwrapKeyPair(bundle, password);
+      if (keyPair != null) {
+        await _activate(keyPair, bundle);
+        return;
+      }
+      // If password did not unwrap (e.g. legacy custom password), keep as locked
+      status.value = ChatCryptoStatus.locked;
+    } else {
+      // No keys yet on server: create new keys protected by account password
+      await createKeys(password);
+    }
   }
 
   /// Creates a new key pair protected by [password]. Returns an error message or null.

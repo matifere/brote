@@ -63,12 +63,12 @@ class _ChatPasswordDialogState extends State<_ChatPasswordDialog> {
     };
     final explanation = switch (widget.mode) {
       ChatPasswordMode.create =>
-        'Elegí una contraseña de chat. La vas a necesitar para leer tus mensajes en otros dispositivos. '
-            'No es la contraseña de tu cuenta y, si la olvidás, no se puede recuperar.',
-      ChatPasswordMode.unlock => 'Ingresá tu contraseña de chat para leer y enviar mensajes cifrados en este dispositivo.',
+        'Ingresá la contraseña de tu cuenta Brote para activar y respaldar tus claves de cifrado.',
+      ChatPasswordMode.unlock =>
+        'Ingresá la contraseña de tu cuenta Brote para desbloquear y sincronizar tus mensajes cifrados.',
       ChatPasswordMode.reset =>
-        'Vas a tener claves nuevas: los mensajes cifrados que ya tenías no se van a poder leer más. '
-            'Elegí una contraseña de chat nueva.',
+        'Vas a tener claves nuevas: los mensajes cifrados antiguos no se van a poder leer más. '
+            'Ingresá la contraseña de tu cuenta Brote.',
     };
 
     return AlertDialog(
@@ -93,7 +93,7 @@ class _ChatPasswordDialogState extends State<_ChatPasswordDialog> {
                 textInputAction: _isUnlock ? TextInputAction.done : TextInputAction.next,
                 onFieldSubmitted: _isUnlock ? (_) => _submit() : null,
                 decoration: InputDecoration(
-                  labelText: 'Contraseña de chat',
+                  labelText: 'Contraseña de tu cuenta',
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     tooltip: _obscure ? 'Mostrar' : 'Ocultar',

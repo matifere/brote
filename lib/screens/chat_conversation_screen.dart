@@ -549,7 +549,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         ),
       ChatCryptoStatus.locked => (
           Icons.lock_outline_rounded,
-          'Ingresá tu contraseña de chat para leer y enviar mensajes cifrados.',
+          'Ingresá la contraseña de tu cuenta para leer y enviar mensajes cifrados.',
           'Desbloquear',
           _unlockEncryption,
         ),

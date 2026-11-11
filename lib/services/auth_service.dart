@@ -222,6 +222,13 @@ class AuthService {
           await SessionStorage.save(token: _sessionToken!, profile: _currentUser!.toJson());
         }
 
+        // Automatic end-to-end chat encryption setup with account password
+        try {
+          await ChatCrypto().onAccountLogin(password);
+        } catch (e) {
+          debugPrint('Chat crypto auto-register warning: $e');
+        }
+
         return AuthResponse.success(
           token: _sessionToken ?? '',
           profile: _currentUser!,
@@ -264,6 +271,13 @@ class AuthService {
 
         if (_sessionToken != null && _currentUser != null) {
           await SessionStorage.save(token: _sessionToken!, profile: _currentUser!.toJson());
+        }
+
+        // Automatic end-to-end chat encryption setup with account password
+        try {
+          await ChatCrypto().onAccountLogin(password);
+        } catch (e) {
+          debugPrint('Chat crypto auto-register warning: $e');
         }
 
         return AuthResponse.success(
