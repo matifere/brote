@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/chat_item.dart';
 import '../models/chat_message.dart';
+import '../models/rating.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
 
@@ -357,6 +358,35 @@ class AuthService {
     }
   }
 
+  /// Applies a change to the ratings stored in the bio, keeping the rest of the profile intact
+  Future<AuthResponse> updateBioRatings(ProfileBio Function(ProfileBio current) change) async {
+    if (_sessionToken == null) {
+      return AuthResponse.failure('Sesión no encontrada. Iniciá sesión nuevamente.');
+    }
+
+    // Start from the latest bio so edits made elsewhere aren't overwritten
+    final latest = await fetchMyProfile();
+    if (latest == null) {
+      return AuthResponse.failure('No se pudo cargar tu perfil.');
+    }
+
+    final updated = change(ProfileBio.parse(latest.bio));
+    if (!updated.fits) {
+      return AuthResponse.failure(
+        'No entra en tu descripción (máx. ${ProfileBio.maxLength} caracteres). '
+        'Quitá alguna calificación o acortá tu biografía.',
+      );
+    }
+
+    // avatarUrl and bannerUrl must be resent: the API clears them when they're null
+    return updateProfile(
+      displayName: latest.displayName,
+      bio: updated.compose(),
+      avatarUrl: latest.avatarUrl,
+      bannerUrl: latest.bannerUrl,
+    );
+  }
+
   /// Follow a user on Neon (accepted if public, pending if private)
   Future<UserProfile?> followUser(String targetIdOrUsername) async {
     final token = _sessionToken;
@@ -490,7 +520,7 @@ class AuthService {
         final data = jsonDecode(response.body);
         if (data['success'] == true) {
           if (data['profile'] != null) {
-            _currentUser = UserProfile.fromJson(data['profile'] as Map<String, dynamic>);
+            _currentUser = UserProfile.fromJson(data['profile'] as Map<String, dynamic>, email: _currentUser?.email);
           } else if (_currentUser != null) {
             _currentUser = _currentUser!.copyWith(
               followersCount: _currentUser!.followersCount + 1,
@@ -500,6 +530,9 @@ class AuthService {
             );
           }
           currentUserNotifier.value = _currentUser;
+          if (_currentUser != null) {
+            await SessionStorage.save(token: token, profile: _currentUser!.toJson());
+          }
           return true;
         }
       }
@@ -528,7 +561,7 @@ class AuthService {
         final data = jsonDecode(response.body);
         if (data['success'] == true) {
           if (data['profile'] != null) {
-            _currentUser = UserProfile.fromJson(data['profile'] as Map<String, dynamic>);
+            _currentUser = UserProfile.fromJson(data['profile'] as Map<String, dynamic>, email: _currentUser?.email);
           } else if (_currentUser != null) {
             _currentUser = _currentUser!.copyWith(
               pendingRequestsCount: (_currentUser!.pendingRequestsCount > 0)
@@ -537,6 +570,9 @@ class AuthService {
             );
           }
           currentUserNotifier.value = _currentUser;
+          if (_currentUser != null) {
+            await SessionStorage.save(token: token, profile: _currentUser!.toJson());
+          }
           return true;
         }
       }
@@ -754,7 +790,10 @@ class AuthService {
         final Map<String, dynamic> data = jsonDecode(response.body);
         if (data['success'] == true && data['posts'] is List) {
           final list = data['posts'] as List;
-          return list.map((item) => PostItem.fromJson(item as Map<String, dynamic>)).toList();
+          return list
+              .map((item) => PostItem.fromJson(item as Map<String, dynamic>))
+              .where((post) => !post.isExpired)
+              .toList();
         }
       }
     } catch (e) {
@@ -781,7 +820,10 @@ class AuthService {
         final Map<String, dynamic> data = jsonDecode(response.body);
         if (data['success'] == true && data['posts'] is List) {
           final list = data['posts'] as List;
-          return list.map((item) => PostItem.fromJson(item as Map<String, dynamic>)).toList();
+          return list
+              .map((item) => PostItem.fromJson(item as Map<String, dynamic>))
+              .where((post) => !post.isExpired)
+              .toList();
         }
       }
     } catch (e) {
@@ -1002,8 +1044,13 @@ class AuthService {
       final Map<String, dynamic> data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
-        return data['imageUrl'] as String?;
+        final url = data['imageUrl'] as String?;
+        // The chat upload endpoint answers with a server-relative path
+        // (`/api/posts/media/...`); store an absolute URL so every client can load it.
+        if (url != null && url.startsWith('/')) return '$baseUrl$url';
+        return url;
       }
+      debugPrint('Chat image upload failed (${response.statusCode}): ${data['error']}');
     } catch (e) {
       debugPrint('Error uploading chat image: $e');
     }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/chat_item.dart';
 import '../models/user_profile.dart';
@@ -16,6 +17,8 @@ class _NewChatScreenState extends State<NewChatScreen> {
   List<ChatCandidate> _candidates = [];
   bool _isLoading = true;
   bool _isStartingChat = false;
+  Timer? _debounce;
+  int _searchRequestId = 0;
 
   @override
   void initState() {
@@ -25,14 +28,23 @@ class _NewChatScreenState extends State<NewChatScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
+  void _onSearchChanged(String query) {
+    _debounce?.cancel();
+    setState(() {}); // refresh the clear button
+    _debounce = Timer(const Duration(milliseconds: 300), () => _loadCandidates(query));
+  }
+
   Future<void> _loadCandidates([String query = '']) async {
+    final requestId = ++_searchRequestId;
     setState(() => _isLoading = true);
     final results = await AuthService().getChatCandidates(query: query);
-    if (mounted) {
+    // Ignore responses that arrive after a newer search was issued.
+    if (mounted && requestId == _searchRequestId) {
       setState(() {
         _candidates = results;
         _isLoading = false;
@@ -41,6 +53,8 @@ class _NewChatScreenState extends State<NewChatScreen> {
   }
 
   Future<void> _handleSelectCandidate(ChatCandidate candidate) async {
+    if (_isStartingChat) return;
+
     if (!candidate.canMessage) {
       showDialog(
         context: context,
@@ -113,7 +127,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
             child: TextField(
               controller: _searchController,
               autofocus: true,
-              onChanged: (val) => _loadCandidates(val),
+              onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: 'Buscar por nombre o @usuario...',
                 prefixIcon: const Icon(Icons.search_rounded),
@@ -121,6 +135,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
                     ? IconButton(
                         icon: const Icon(Icons.clear_rounded),
                         onPressed: () {
+                          _debounce?.cancel();
                           _searchController.clear();
                           _loadCandidates();
                         },

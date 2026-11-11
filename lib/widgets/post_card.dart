@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../models/post_item.dart';
+import '../models/rating.dart';
 import '../models/user_profile.dart';
 import '../screens/profile_screen.dart';
 import '../services/auth_service.dart';
+import 'rating_stars.dart';
 
 class PostCard extends StatefulWidget {
   final PostItem post;
@@ -35,7 +37,9 @@ class _PostCardState extends State<PostCard> {
   @override
   void didUpdateWidget(covariant PostCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.post.id != widget.post.id) {
+    // The feed rebuilds with fresh PostItem instances on every reload, so
+    // compare identity (not id) to pick up updated like state and counts.
+    if (!identical(oldWidget.post, widget.post) && !_isLikeLoading) {
       _isLiked = widget.post.isLiked;
       _likesCount = widget.post.likesCount;
     }
@@ -54,16 +58,26 @@ class _PostCardState extends State<PostCard> {
 
     _isLikeLoading = true;
     final res = await AuthService().toggleLikePost(widget.post.id);
-    if (!mounted) return;
     _isLikeLoading = false;
+    if (!mounted) return;
 
-    if (res != null) {
-      setState(() {
+    setState(() {
+      if (res != null) {
         _isLiked = res['isLiked'] as bool;
         _likesCount = res['likesCount'] as int;
-        widget.post.isLiked = _isLiked;
-        widget.post.likesCount = _likesCount;
-      });
+      } else {
+        // Request failed: revert the optimistic update.
+        _isLiked = widget.post.isLiked;
+        _likesCount = widget.post.likesCount;
+      }
+      widget.post.isLiked = _isLiked;
+      widget.post.likesCount = _likesCount;
+    });
+
+    if (res == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo registrar el me gusta. Intentá de nuevo.')),
+      );
     }
   }
 
@@ -94,6 +108,8 @@ class _PostCardState extends State<PostCard> {
     final authorName = widget.post.authorName;
     final authorUsername = widget.post.authorUsername;
     final authorAvatar = widget.post.authorAvatarUrl;
+    final parsed = widget.post.parsedContent;
+    final timeLeft = widget.post.timeLeft;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -159,15 +175,34 @@ class _PostCardState extends State<PostCard> {
                         '· ${widget.post.timeAgo}',
                         style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
                       ),
+                      if (timeLeft != null) ...[
+                        const SizedBox(width: 6),
+                        Icon(Icons.timelapse_rounded, size: 13, color: colorScheme.tertiary),
+                        const SizedBox(width: 2),
+                        Flexible(
+                          child: Tooltip(
+                            message: 'Publicación de 24 h',
+                            child: Text(
+                              timeLeft,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: textTheme.bodySmall?.copyWith(color: colorScheme.tertiary),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
                 const SizedBox(height: 8),
 
+                // Review of a movie or music
+                if (parsed.review != null) _buildReview(parsed.review!, colorScheme, textTheme),
+
                 // Markdown Post Content
-                if (widget.post.content.trim().isNotEmpty)
+                if (parsed.body.isNotEmpty)
                   MarkdownBody(
-                    data: widget.post.content,
+                    data: parsed.body,
                     selectable: false,
                     styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
                       p: textTheme.bodyMedium?.copyWith(
@@ -328,9 +363,22 @@ class _PostCardState extends State<PostCard> {
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                       onPressed: () {
-                        Clipboard.setData(ClipboardData(text: widget.post.content));
+                        final text = [
+                          if (parsed.review != null) parsed.review!.encodeLine(),
+                          if (parsed.body.isNotEmpty) parsed.body,
+                        ].join('\n\n');
+                        final imageUrl = widget.post.imageUrl ?? '';
+                        final shareText = [
+                          if (text.isNotEmpty) text,
+                          if (imageUrl.isNotEmpty) imageUrl,
+                        ].join('\n\n');
+                        Clipboard.setData(ClipboardData(text: shareText));
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Texto copiado al portapapeles')),
+                          SnackBar(
+                            content: Text(text.isNotEmpty
+                                ? 'Texto copiado al portapapeles'
+                                : 'Enlace de la imagen copiado al portapapeles'),
+                          ),
                         );
                       },
                     ),
@@ -339,6 +387,63 @@ class _PostCardState extends State<PostCard> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReview(RatedItem review, ColorScheme colorScheme, TextTheme textTheme) {
+    final isMovie = review.category == RatingCategory.movie;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              isMovie ? Icons.movie_outlined : Icons.music_note_outlined,
+              color: colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isMovie ? 'Reseña de película' : 'Reseña de música',
+                  style: textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+                Text(
+                  review.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                if (review.detail != null)
+                  Text(
+                    review.detail!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          RatingStars(stars: review.stars, size: 16),
         ],
       ),
     );

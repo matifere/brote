@@ -56,7 +56,7 @@ class ChatItem {
     } else if (diff.inHours >= 1) {
       return '${lastMessageAt!.hour}:${lastMessageAt!.minute.toString().padLeft(2, '0')}';
     } else if (diff.inMinutes >= 1) {
-      return '${lastMessageAt!.minute}m';
+      return '${diff.inMinutes} m';
     } else {
       return 'ahora';
     }

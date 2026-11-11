@@ -1943,4 +1943,79 @@ app.post("/api/chats/upload-image", async (c) => {
   }
 });
 
+// List followers / following of a user (private accounts: only owner and accepted followers)
+const followListHandler = (direction: "followers" | "following") => async (c: any) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    const viewerId = auth?.userId || null;
+    const targetParam = c.req.param("target");
+    const p = getPool();
+
+    if (targetParam === "me" && !viewerId) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const targetRes = await p.query(
+      `SELECT id, is_private FROM public.profiles
+       WHERE id::text = $1 OR lower(username) = lower($1)
+       LIMIT 1`,
+      [targetParam === "me" ? viewerId : targetParam]
+    );
+    if (targetRes.rows.length === 0) {
+      return c.json({ success: false, error: "Usuario no encontrado" }, 404);
+    }
+    const target = targetRes.rows[0];
+    const isOwner = viewerId === target.id;
+
+    if (target.is_private && !isOwner) {
+      const followRes = viewerId
+        ? await p.query(
+            `SELECT 1 FROM public.follows WHERE follower_id = $1 AND following_id = $2 AND status = 'accepted'`,
+            [viewerId, target.id]
+          )
+        : { rows: [] };
+      if (followRes.rows.length === 0) {
+        return c.json({ success: false, locked: true, error: "Esta cuenta es privada" }, 403);
+      }
+    }
+
+    // followers: people whose follow points at target; following: people target points at
+    const [matchCol, listCol] =
+      direction === "followers" ? ["following_id", "follower_id"] : ["follower_id", "following_id"];
+
+    const res = await p.query(
+      `SELECT
+        pr.id, pr.username, pr.display_name, pr.avatar_url, pr.is_verified, pr.is_private,
+        (SELECT status FROM public.follows WHERE follower_id = $2 AND following_id = pr.id) as viewer_status,
+        EXISTS(SELECT 1 FROM public.follows WHERE follower_id = pr.id AND following_id = $2 AND status = 'accepted') as follows_viewer
+      FROM public.follows f
+      INNER JOIN public.profiles pr ON pr.id = f.${listCol}
+      WHERE f.${matchCol} = $1 AND f.status = 'accepted'
+      ORDER BY f.created_at DESC
+      LIMIT 500`,
+      [target.id, viewerId]
+    );
+
+    return c.json({
+      success: true,
+      users: res.rows.map((row) => ({
+        id: row.id,
+        username: row.username,
+        displayName: row.display_name,
+        avatarUrl: row.avatar_url,
+        isVerified: Boolean(row.is_verified),
+        isPrivate: Boolean(row.is_private),
+        followStatus: row.viewer_status || "none",
+        isFollowedBy: Boolean(row.follows_viewer),
+      })),
+    });
+  } catch (err: any) {
+    console.error(`${direction} list error:`, err);
+    return c.json({ success: false, error: err.message || "Error al obtener la lista" }, 500);
+  }
+};
+
+app.get("/api/profile/:target/followers", followListHandler("followers"));
+app.get("/api/profile/:target/following", followListHandler("following"));
+
 export default app;

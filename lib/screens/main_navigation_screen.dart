@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
+import '../services/auth_service.dart';
 import 'chats_screen.dart';
 import 'create_post_screen.dart';
 import 'feed_screen.dart';
@@ -48,6 +49,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
+          // Tabs live in an IndexedStack and never rebuild from scratch, so
+          // refresh them when entering (e.g. after following someone).
+          if (index != _currentIndex) {
+            if (index == 0) AuthService().postsRefreshNotifier.value++;
+            if (index == 3) AuthService().chatsRefreshNotifier.value++;
+            if (index == 4) AuthService().fetchMyProfile(); // follower/following counts
+          }
           setState(() => _currentIndex = index);
         },
         destinations: const [

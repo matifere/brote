@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
+import '../models/rating.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
+import '../widgets/rating_stars.dart';
 import '../widgets/post_card.dart';
 import 'auth_screen.dart';
 import 'chat_conversation_screen.dart';
 import 'edit_profile_screen.dart';
+import 'follow_list_screen.dart';
 import 'follow_requests_screen.dart';
+import 'rating_search_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final UserProfile profile;
@@ -168,8 +172,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     final displayName = _currentProfile.displayName;
     final username = _currentProfile.username;
-    final bio = _currentProfile.bio ??
-        'Creador de contenido & fotografía. Apasionado por la tecnología, la música y el diseño. Conectando todos los días.';
+    final parsedBio = ProfileBio.parse(_currentProfile.bio);
+    final bio = _currentProfile.bio == null
+        ? 'Creador de contenido & fotografía. Apasionado por la tecnología, la música y el diseño. Conectando todos los días.'
+        : parsedBio.text;
     final avatarUrl = _currentProfile.avatarUrl;
     final bannerUrl = _currentProfile.bannerUrl;
 
@@ -383,7 +389,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         style: const TextStyle(fontWeight: FontWeight.bold),
                                       ),
                               ),
-                              if (!_currentProfile.isPrivate || _currentProfile.isFollowing) ...[
+                              if (!_currentProfile.isPrivate || _currentProfile.isFollowing || _currentProfile.isFollowedBy) ...[
                                 const SizedBox(width: 8),
                                 OutlinedButton.icon(
                                   onPressed: _openChatWithUser,
@@ -436,23 +442,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 12),
 
                     // Bio
-                    Text(
-                      bio,
-                      style: textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onSurface,
-                        height: 1.45,
+                    if (bio.isNotEmpty) ...[
+                      Text(
+                        bio,
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurface,
+                          height: 1.45,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Rated movies and music (stored in the bio)
+                    for (final category in RatingCategory.values)
+                      if (parsedBio.of(category).isNotEmpty || _isOwnProfile) ...[
+                        _buildRatingsSection(category, parsedBio.of(category), colorScheme, textTheme),
+                        const SizedBox(height: 16),
+                      ],
 
                     // Metrics Row (Publicaciones, Seguidores, Siguiendo)
                     Row(
                       children: [
                         _buildMetric('${_userPosts.length}', 'Publicaciones', textTheme, colorScheme),
                         const SizedBox(width: 20),
-                        _buildMetric('${_currentProfile.followersCount}', 'Seguidores', textTheme, colorScheme),
+                        _buildMetric('${_currentProfile.followersCount}', 'Seguidores', textTheme, colorScheme,
+                            onTap: _isContentLocked ? null : () => _openFollowList(0)),
                         const SizedBox(width: 20),
-                        _buildMetric('${_currentProfile.followingCount}', 'Siguiendo', textTheme, colorScheme),
+                        _buildMetric('${_currentProfile.followingCount}', 'Siguiendo', textTheme, colorScheme,
+                            onTap: _isContentLocked ? null : () => _openFollowList(1)),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -478,6 +495,101 @@ class _ProfileScreenState extends State<ProfileScreen> {
         body: _isContentLocked
             ? _buildPrivateAccountNotice(colorScheme, textTheme)
             : _buildPostsStream(colorScheme, textTheme),
+      ),
+    );
+  }
+
+  Future<void> _openRatingSearch(RatingCategory category) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => RatingSearchScreen(category: category)),
+    );
+  }
+
+  Widget _buildRatingsSection(RatingCategory category, List<RatedItem> ratings, ColorScheme colorScheme, TextTheme textTheme) {
+    final isMovie = category == RatingCategory.movie;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(isMovie ? Icons.local_movies_outlined : Icons.library_music_outlined, size: 18, color: colorScheme.primary),
+            const SizedBox(width: 6),
+            Text(
+              isMovie ? 'Películas' : 'Música',
+              style: textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            if (ratings.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Text(
+                '${ratings.length}',
+                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+              ),
+            ],
+            const Spacer(),
+            if (_isOwnProfile)
+              TextButton.icon(
+                onPressed: () => _openRatingSearch(category),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('Calificar'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        if (ratings.isEmpty)
+          Text(
+            isMovie
+                ? 'Buscá películas, calificalas y aparecen acá en tu descripción.'
+                : 'Buscá temas o álbumes, calificalos y aparecen acá en tu descripción.',
+            style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: ratings.map((rating) => _buildRatingChip(rating, colorScheme, textTheme)).toList(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildRatingChip(RatedItem rating, ColorScheme colorScheme, TextTheme textTheme) {
+    final detail = rating.detail;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: rating.title,
+              style: textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            if (detail != null)
+              TextSpan(
+                text: rating.category == RatingCategory.movie ? ' $detail' : ' · $detail',
+                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+              ),
+            const WidgetSpan(child: SizedBox(width: 6)),
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: RatingStars(stars: rating.stars, size: 13),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -514,8 +626,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildMetric(String number, String label, TextTheme textTheme, ColorScheme colorScheme) {
-    return Row(
+  Future<void> _openFollowList(int initialTab) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FollowListScreen(profile: _currentProfile, initialTab: initialTab),
+      ),
+    );
+    if (!mounted) return;
+    // Follows changed from the list (or the profiles opened from it) affect the counts.
+    if (_isOwnProfile) {
+      AuthService().fetchMyProfile();
+    } else {
+      final fresh = await AuthService().fetchUserProfile(_currentProfile.username);
+      if (fresh != null && mounted) setState(() => _currentProfile = fresh);
+    }
+  }
+
+  Widget _buildMetric(
+    String number,
+    String label,
+    TextTheme textTheme,
+    ColorScheme colorScheme, {
+    VoidCallback? onTap,
+  }) {
+    final content = Row(
       children: [
         Text(
           number,
@@ -530,6 +664,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
           style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
         ),
       ],
+    );
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: content,
+      ),
     );
   }
 

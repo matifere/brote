@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/chat_message.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../widgets/full_screen_image_viewer.dart';
 import 'profile_screen.dart';
 
 class ChatConversationScreen extends StatefulWidget {
@@ -23,12 +24,14 @@ class ChatConversationScreen extends StatefulWidget {
 class _ChatConversationScreenState extends State<ChatConversationScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _inputFocusNode = FocusNode();
   final ImagePicker _picker = ImagePicker();
 
   List<ChatMessage> _messages = [];
   late UserProfile _otherParticipant;
   bool _isLoading = true;
   bool _isSending = false;
+  bool _isPolling = false;
   Timer? _pollingTimer;
 
   @override
@@ -46,6 +49,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   void dispose() {
     _pollingTimer?.cancel();
+    _inputFocusNode.dispose();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -70,16 +74,32 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   }
 
   Future<void> _pollNewMessages() async {
-    final res = await AuthService().getConversationMessages(widget.conversationId);
-    if (!mounted || res == null) return;
+    // Skip this tick if the previous request is still in flight (slow network).
+    if (_isPolling || _isLoading) return;
+    _isPolling = true;
+    try {
+      final res = await AuthService().getConversationMessages(widget.conversationId);
+      if (!mounted || res == null) return;
 
-    final newMsgs = res['messages'] as List<ChatMessage>;
-    if (newMsgs.length != _messages.length) {
-      setState(() {
-        _messages = newMsgs;
-      });
-      _scrollToBottom();
+      final newMsgs = res['messages'] as List<ChatMessage>;
+      final lastId = newMsgs.isNotEmpty ? newMsgs.last.id : null;
+      final currentLastId = _messages.isNotEmpty ? _messages.last.id : null;
+      if (newMsgs.length != _messages.length || lastId != currentLastId) {
+        setState(() {
+          _messages = newMsgs;
+        });
+        _scrollToBottom();
+      }
+    } finally {
+      _isPolling = false;
     }
+  }
+
+  /// The chat upload endpoint returns a server-relative path
+  /// (`/api/posts/media/...`), which Image.network cannot load on its own.
+  String _resolveMediaUrl(String url) {
+    if (url.startsWith('/')) return '${AuthService.neonServerUrl}$url';
+    return url;
   }
 
   void _scrollToBottom() {
@@ -95,6 +115,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   }
 
   Future<void> _handleSendMessage({String? mediaUrl}) async {
+    if (_isSending) return;
     final text = _messageController.text.trim();
     if (text.isEmpty && mediaUrl == null) return;
 
@@ -109,13 +130,23 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
     if (!mounted) return;
     setState(() => _isSending = false);
+    // Keep the cursor in the input so the next message can be typed right away.
+    _inputFocusNode.requestFocus();
 
     if (res['success'] == true && res['message'] != null) {
+      final sent = res['message'] as ChatMessage;
       setState(() {
-        _messages.add(res['message'] as ChatMessage);
+        // A poll may have already picked this message up while the send was in flight.
+        if (!_messages.any((m) => m.id == sent.id)) {
+          _messages.add(sent);
+        }
       });
       _scrollToBottom();
     } else {
+      // Give the unsent text back so the user doesn't lose it.
+      if (text.isNotEmpty && _messageController.text.isEmpty) {
+        _messageController.text = text;
+      }
       final error = res['error'] as String? ?? 'Error al enviar el mensaje';
       final isPrivate = res['isPrivateRestricted'] as bool? ?? false;
 
@@ -239,6 +270,78 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         );
       },
+    );
+  }
+
+  static const double _thumbnailMaxWidth = 220;
+  static const double _thumbnailMaxHeight = 280;
+
+  /// Small preview inside the bubble, decoded at thumbnail size; tapping it
+  /// opens the full-resolution photo.
+  Widget _buildMediaThumbnail(ChatMessage msg, bool isMe, ColorScheme colorScheme) {
+    final url = _resolveMediaUrl(msg.mediaUrl!);
+    final heroTag = 'chat-media-${msg.id}';
+    final cacheWidth =
+        (_thumbnailMaxWidth * MediaQuery.devicePixelRatioOf(context)).round();
+    final placeholderColor = isMe
+        ? colorScheme.onPrimary.withValues(alpha: 0.15)
+        : colorScheme.onSurface.withValues(alpha: 0.08);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.zoomIn,
+      child: GestureDetector(
+        onTap: () => openFullScreenImage(
+          context,
+          imageUrl: url,
+          heroTag: heroTag,
+          thumbnailCacheWidth: cacheWidth,
+          title: msg.isMe ? 'Vos' : msg.senderName,
+          subtitle: msg.timeFormatted.isEmpty ? null : msg.timeFormatted,
+        ),
+        child: Hero(
+          tag: heroTag,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: _thumbnailMaxWidth,
+                maxHeight: _thumbnailMaxHeight,
+              ),
+              child: Image.network(
+                url,
+                cacheWidth: cacheWidth,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return Container(
+                    width: 180,
+                    height: 180,
+                    color: placeholderColor,
+                    alignment: Alignment.center,
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        value: progress.expectedTotalBytes != null
+                            ? progress.cumulativeBytesLoaded / progress.expectedTotalBytes!
+                            : null,
+                      ),
+                    ),
+                  );
+                },
+                errorBuilder: (context, error, stackTrace) => Container(
+                  width: 140,
+                  height: 100,
+                  color: placeholderColor,
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.broken_image_rounded),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -397,15 +500,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                                 children: [
                                   // Optional Media Image
                                   if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) ...[
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(10),
-                                      child: Image.network(
-                                        msg.mediaUrl!,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) =>
-                                            const Icon(Icons.broken_image_rounded),
-                                      ),
-                                    ),
+                                    _buildMediaThumbnail(msg, isMe, colorScheme),
                                     if (msg.content.isNotEmpty) const SizedBox(height: 8),
                                   ],
 
@@ -470,9 +565,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                   Expanded(
                     child: TextField(
                       controller: _messageController,
+                      focusNode: _inputFocusNode,
                       maxLines: 4,
                       minLines: 1,
+                      // Plain text keyboard so Enter sends (a multiline keyboard
+                      // would insert a newline on web/desktop instead).
+                      keyboardType: TextInputType.text,
                       textInputAction: TextInputAction.send,
+                      // The default for "send" unfocuses the field after submitting.
+                      onEditingComplete: () {},
                       decoration: InputDecoration(
                         hintText: 'Escribí un mensaje...',
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),

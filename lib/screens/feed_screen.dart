@@ -285,7 +285,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
             Icon(Icons.people_outline_rounded, size: 54, color: colorScheme.primary),
             const SizedBox(height: 16),
             Text(
-              'Aún no seguís a nadie',
+              'Nada de las cuentas que seguís',
               style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),

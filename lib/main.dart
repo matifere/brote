@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'models/user_profile.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_navigation_screen.dart';
 import 'services/auth_service.dart';
@@ -71,13 +72,22 @@ class _AuthGateState extends State<AuthGate> {
           );
         }
 
-        final isAuthenticated = snapshot.data == true && AuthService().currentUser != null;
-
-        if (isAuthenticated) {
-          return MainNavigationScreen(profile: AuthService().currentUser!);
-        } else {
+        if (snapshot.data != true) {
           return const AuthScreen();
         }
+
+        // The restored session is verified against Neon in the background; if it
+        // turns out to be expired, AuthService logs out and we fall back to login
+        // instead of leaving the user in an app where every request fails.
+        return ValueListenableBuilder<UserProfile?>(
+          valueListenable: AuthService().currentUserNotifier,
+          builder: (context, user, _) {
+            if (user == null || !AuthService().isAuthenticated) {
+              return const AuthScreen();
+            }
+            return MainNavigationScreen(profile: user);
+          },
+        );
       },
     );
   }

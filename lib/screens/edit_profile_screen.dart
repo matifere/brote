@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../models/rating.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 
@@ -17,6 +18,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _displayNameController;
   late final TextEditingController _bioController;
+  late final ProfileBio _initialBio;
   late bool _isPrivate;
 
   final ImagePicker _picker = ImagePicker();
@@ -34,7 +36,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void initState() {
     super.initState();
     _displayNameController = TextEditingController(text: widget.profile.displayName);
-    _bioController = TextEditingController(text: widget.profile.bio ?? '');
+    // Ratings live at the end of the bio; only the free text is editable here
+    _initialBio = ProfileBio.parse(widget.profile.bio);
+    _bioController = TextEditingController(text: _initialBio.text);
     _isPrivate = widget.profile.isPrivate;
   }
 
@@ -404,7 +408,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // 3. Update display name, bio, avatar, banner and privacy on Neon
       final updateResponse = await AuthService().updateProfile(
         displayName: newDisplayName,
-        bio: newBio.isNotEmpty ? newBio : null,
+        bio: _initialBio.withText(newBio).compose(),
         avatarUrl: _removeAvatar ? '' : finalAvatarUrl,
         bannerUrl: _removeBanner ? '' : finalBannerUrl,
         isPrivate: _isPrivate,
@@ -768,10 +772,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     // Bio
                     TextFormField(
                       controller: _bioController,
-                      maxLength: 300,
+                      maxLength: _initialBio.maxTextLength,
                       maxLines: 4,
                       decoration: InputDecoration(
                         labelText: 'Biografía / Descripción',
+                        helperText: _initialBio.ratings.isEmpty
+                            ? null
+                            : 'Tus calificaciones de ${_initialBio.ratedTopics} se muestran debajo de la descripción.',
+                        helperMaxLines: 2,
                         hintText: 'Contale a la comunidad sobre tus intereses, proyectos o gustos...',
                         prefixIcon: const Padding(
                           padding: EdgeInsets.only(bottom: 50),

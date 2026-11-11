@@ -1,3 +1,5 @@
+import 'post_content.dart';
+
 class PostItem {
   final String id;
   final String authorId;
@@ -33,6 +35,24 @@ class PostItem {
     this.isFollowingAuthor = false,
   });
 
+  /// Review header, body and 24-hour mark encoded in the post text.
+  late final PostContent parsedContent = PostContent.parse(content);
+
+  DateTime? get expiresAt => parsedContent.isEphemeral && createdAt != null
+      ? createdAt!.add(PostContent.ephemeralDuration)
+      : null;
+
+  bool get isExpired => expiresAt != null && !DateTime.now().isBefore(expiresAt!);
+
+  /// Time left for 24-hour posts, e.g. "quedan 5 h".
+  String? get timeLeft {
+    if (expiresAt == null) return null;
+    final left = expiresAt!.difference(DateTime.now());
+    if (left.inHours >= 1) return 'quedan ${left.inHours} h';
+    if (left.inMinutes >= 1) return 'quedan ${left.inMinutes} min';
+    return 'por vencer';
+  }
+
   String get timeAgo {
     if (createdAt == null) return 'recién';
     final diff = DateTime.now().difference(createdAt!);
@@ -53,7 +73,7 @@ class PostItem {
     DateTime? dt;
     final dateRaw = json['createdAt'] ?? json['created_at'];
     if (dateRaw != null) {
-      dt = DateTime.tryParse(dateRaw.toString());
+      dt = DateTime.tryParse(dateRaw.toString())?.toLocal();
     }
     return PostItem(
       id: json['id'].toString(),

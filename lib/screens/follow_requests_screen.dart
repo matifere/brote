@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/rating.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import 'profile_screen.dart';
@@ -233,12 +234,12 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
                                 ],
                               ),
 
-                              if (req.bio != null && req.bio!.trim().isNotEmpty) ...[
+                              if (ProfileBio.parse(req.bio).preview.isNotEmpty) ...[
                                 const SizedBox(height: 10),
                                 Padding(
                                   padding: const EdgeInsets.only(left: 66),
                                   child: Text(
-                                    req.bio!.trim(),
+                                    ProfileBio.parse(req.bio).preview,
                                     style: textTheme.bodyMedium?.copyWith(
                                       color: colorScheme.onSurfaceVariant,
                                     ),

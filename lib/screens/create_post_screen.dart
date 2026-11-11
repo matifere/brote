@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:image_picker/image_picker.dart';
+import '../models/post_content.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 
@@ -27,6 +28,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   String? _selectedImageName;
   bool _isPublishing = false;
   bool _showPreview = false;
+  bool _isEphemeral = false;
 
   @override
   void dispose() {
@@ -144,9 +146,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         }
       }
 
-      // Create post on Neon backend
+      // Create post on Neon backend (the 24 h mark travels in the text)
+      final content = PostContent(body: text, isEphemeral: _isEphemeral).compose();
       final post = await AuthService().createPost(
-        content: text.isNotEmpty ? text : null,
+        content: content.isNotEmpty ? content : null,
         imageUrl: uploadedImageUrl,
       );
 
@@ -154,16 +157,20 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       setState(() => _isPublishing = false);
 
       if (post != null) {
+        final wasEphemeral = _isEphemeral;
         _textController.clear();
         setState(() {
           _selectedImageBytes = null;
           _selectedImageName = null;
           _showPreview = false;
+          _isEphemeral = false;
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('¡Publicación creada con éxito!'),
+          SnackBar(
+            content: Text(wasEphemeral
+                ? '¡Publicación creada! Se deja de mostrar en 24 horas.'
+                : '¡Publicación creada con éxito!'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -424,6 +431,47 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                     onPressed: _removeSelectedImage,
                   ),
               ],
+            ),
+            const SizedBox(height: 20),
+
+            // Duration: permanent or 24 hours
+            Row(
+              children: [
+                Icon(Icons.schedule_rounded, size: 20, color: colorScheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Text(
+                  'Duración',
+                  style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: false,
+                    icon: Icon(Icons.all_inclusive_rounded, size: 18),
+                    label: Text('Permanente'),
+                  ),
+                  ButtonSegment(
+                    value: true,
+                    icon: Icon(Icons.timelapse_rounded, size: 18),
+                    label: Text('24 horas'),
+                  ),
+                ],
+                selected: {_isEphemeral},
+                onSelectionChanged: (selection) => setState(() => _isEphemeral = selection.first),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isEphemeral
+                  ? 'Se deja de mostrar en Brote 24 horas después de publicarla.'
+                  : 'Queda en tu perfil y en el feed.',
+              style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
             ),
           ],
         ),

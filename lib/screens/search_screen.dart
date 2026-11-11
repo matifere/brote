@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../models/rating.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import 'profile_screen.dart';
+import 'rating_search_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -11,7 +13,10 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
+enum _SearchMode { people, movies, music }
+
 class _SearchScreenState extends State<SearchScreen> {
+  _SearchMode _mode = _SearchMode.people;
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounceTimer;
 
@@ -61,7 +66,8 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() => _isSearching = true);
     _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
       final results = await AuthService().searchProfiles(text);
-      if (mounted) {
+      // Ignore responses for queries the user already changed
+      if (mounted && _searchController.text.trim() == text) {
         setState(() {
           _searchResults = results;
           _isSearching = false;
@@ -84,6 +90,7 @@ class _SearchScreenState extends State<SearchScreen> {
         : profile.username[0].toUpperCase();
 
     final hasAvatar = profile.avatarUrl != null && profile.avatarUrl!.isNotEmpty;
+    final bioPreview = ProfileBio.parse(profile.bio).preview;
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -136,10 +143,10 @@ class _SearchScreenState extends State<SearchScreen> {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            if (profile.bio != null && profile.bio!.trim().isNotEmpty) ...[
+            if (bioPreview.isNotEmpty) ...[
               const SizedBox(height: 3),
               Text(
-                profile.bio!.trim(),
+                bioPreview,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
@@ -174,44 +181,82 @@ class _SearchScreenState extends State<SearchScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Search Input Field
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: TextField(
-                controller: _searchController,
-                autofocus: false,
-                decoration: InputDecoration(
-                  hintText: 'Buscar por nombre o @usuario...',
-                  prefixIcon: Icon(Icons.search_rounded, color: colorScheme.primary),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.close_rounded, size: 20),
-                          tooltip: 'Limpiar búsqueda',
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {
-                              _searchResults = [];
-                              _isSearching = false;
-                            });
-                          },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: colorScheme.surfaceContainerLow,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide.none,
-                  ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<_SearchMode>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: _SearchMode.people,
+                      icon: Icon(Icons.people_outline_rounded),
+                      label: Text('Personas'),
+                    ),
+                    ButtonSegment(
+                      value: _SearchMode.movies,
+                      icon: Icon(Icons.movie_outlined),
+                      label: Text('Películas'),
+                    ),
+                    ButtonSegment(
+                      value: _SearchMode.music,
+                      icon: Icon(Icons.music_note_outlined),
+                      label: Text('Música'),
+                    ),
+                  ],
+                  selected: {_mode},
+                  onSelectionChanged: (selection) => setState(() => _mode = selection.first),
                 ),
               ),
             ),
 
-            // Main Content Area
-            Expanded(
-              child: hasQuery
-                  ? _buildSearchResults(colorScheme, textTheme)
-                  : _buildSuggestedSection(colorScheme, textTheme),
-            ),
+            if (_mode != _SearchMode.people)
+              Expanded(
+                child: RatingSearchView(
+                  key: ValueKey(_mode),
+                  category: _mode == _SearchMode.movies ? RatingCategory.movie : RatingCategory.music,
+                ),
+              )
+            else ...[
+              // Search Input Field
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: TextField(
+                  controller: _searchController,
+                  autofocus: false,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar por nombre o @usuario...',
+                    prefixIcon: Icon(Icons.search_rounded, color: colorScheme.primary),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                            tooltip: 'Limpiar búsqueda',
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {
+                                _searchResults = [];
+                                _isSearching = false;
+                              });
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: colorScheme.surfaceContainerLow,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+
+              // Main Content Area
+              Expanded(
+                child: hasQuery
+                    ? _buildSearchResults(colorScheme, textTheme)
+                    : _buildSuggestedSection(colorScheme, textTheme),
+              ),
+            ],
           ],
         ),
       ),

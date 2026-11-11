@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/chat_item.dart';
 import '../models/user_profile.dart';
@@ -17,28 +18,49 @@ class _ChatsScreenState extends State<ChatsScreen> {
   List<ChatItem> _chats = [];
   bool _isLoading = true;
   bool _isSearching = false;
+  bool _isFetching = false;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     AuthService().chatsRefreshNotifier.addListener(_loadChats);
     _loadChats();
+
+    // Keep the inbox (new conversations, last message, unread badges) fresh
+    // without requiring a manual pull-to-refresh.
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadChats());
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     AuthService().chatsRefreshNotifier.removeListener(_loadChats);
     _searchController.dispose();
     super.dispose();
   }
 
   Future<void> _loadChats() async {
-    final list = await AuthService().getConversations();
-    if (mounted) {
-      setState(() {
-        _chats = list;
-        _isLoading = false;
-      });
+    if (_isFetching) return;
+    if (!AuthService().isAuthenticated) {
+      if (_isLoading && mounted) setState(() => _isLoading = false);
+      return;
+    }
+    _isFetching = true;
+    try {
+      final list = await AuthService().getConversations();
+      if (mounted) {
+        setState(() {
+          // Conversations can't be deleted, so an empty result after having
+          // chats means the request failed: keep showing what we had.
+          if (list.isNotEmpty || _chats.isEmpty) {
+            _chats = list;
+          }
+          _isLoading = false;
+        });
+      }
+    } finally {
+      _isFetching = false;
     }
   }
 
