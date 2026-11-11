@@ -859,13 +859,19 @@ class AuthService {
     return null;
   }
 
-  /// Creates a new publication (plain text, markdown, image or text with image)
+  /// Creates a new publication (plain text, markdown, images or text with images)
   Future<PostItem?> createPost({
     String? content,
     String? imageUrl,
+    List<String>? imageUrls,
   }) async {
     final token = _sessionToken;
     if (token == null) return null;
+
+    final resolvedImages = (imageUrls != null && imageUrls.isNotEmpty)
+        ? imageUrls
+        : (imageUrl != null && imageUrl.trim().isNotEmpty ? [imageUrl.trim()] : null);
+    final primaryImage = resolvedImages?.isNotEmpty == true ? resolvedImages!.first : imageUrl?.trim();
 
     try {
       final uri = Uri.parse('$baseUrl/api/posts');
@@ -877,7 +883,8 @@ class AuthService {
         },
         body: jsonEncode({
           'content': content?.trim(),
-          'imageUrl': imageUrl?.trim(),
+          'imageUrl': primaryImage,
+          'imageUrls': resolvedImages,
         }),
       ).timeout(const Duration(seconds: 15));
 

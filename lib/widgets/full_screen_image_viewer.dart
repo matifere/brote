@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 /// Opens a photo in a full-screen viewer with a fade + Hero transition.
 ///
-/// Pass exactly one of [imageUrl] (loaded from the network) or [image]
+/// Pass [imageUrl], [imageUrls] (with [initialIndex]) or [image]
 /// (an image already in memory, e.g. `MemoryImage(decryptedBytes)`).
 ///
 /// If the image is already on screen as a thumbnail decoded with
@@ -12,12 +12,18 @@ import 'package:flutter/services.dart';
 Future<void> openFullScreenImage(
   BuildContext context, {
   String? imageUrl,
+  List<String>? imageUrls,
+  int initialIndex = 0,
   ImageProvider? image,
   required Object heroTag,
   int? thumbnailCacheWidth,
   String? title,
   String? subtitle,
 }) {
+  final resolvedList = (imageUrls != null && imageUrls.isNotEmpty)
+      ? imageUrls
+      : (imageUrl != null && imageUrl.isNotEmpty ? [imageUrl] : const <String>[]);
+
   return Navigator.of(context).push(
     PageRouteBuilder<void>(
       opaque: false,
@@ -26,6 +32,8 @@ Future<void> openFullScreenImage(
       reverseTransitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (_, _, _) => FullScreenImageViewer(
         imageUrl: imageUrl,
+        imageUrls: resolvedList,
+        initialIndex: initialIndex.clamp(0, resolvedList.isEmpty ? 0 : resolvedList.length - 1),
         image: image,
         heroTag: heroTag,
         thumbnailCacheWidth: thumbnailCacheWidth,
@@ -42,6 +50,8 @@ Future<void> openFullScreenImage(
 /// zoom, drag down/up (when not zoomed) or press Esc to close.
 class FullScreenImageViewer extends StatefulWidget {
   final String? imageUrl;
+  final List<String> imageUrls;
+  final int initialIndex;
   final ImageProvider? image;
   final Object heroTag;
   final int? thumbnailCacheWidth;
@@ -51,12 +61,17 @@ class FullScreenImageViewer extends StatefulWidget {
   const FullScreenImageViewer({
     super.key,
     this.imageUrl,
+    this.imageUrls = const [],
+    this.initialIndex = 0,
     this.image,
     required this.heroTag,
     this.thumbnailCacheWidth,
     this.title,
     this.subtitle,
-  }) : assert((imageUrl == null) != (image == null), 'Pass exactly one of imageUrl or image');
+  }) : assert(
+          (imageUrl == null && identical(imageUrls, const <String>[])) != (image == null),
+          'Pass exactly one of imageUrl or image',
+        );
 
   @override
   State<FullScreenImageViewer> createState() => _FullScreenImageViewerState();
@@ -71,13 +86,30 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
   double _dragOffset = 0;
   bool _isZoomed = false;
 
+  late int _currentIndex = widget.initialIndex;
+  late final PageController _pageController = PageController(initialPage: widget.initialIndex);
+
+  List<String> get _urls => widget.imageUrls.isNotEmpty
+      ? widget.imageUrls
+      : (widget.imageUrl != null && widget.imageUrl!.isNotEmpty ? [widget.imageUrl!] : const []);
+
   @override
   void dispose() {
     _transformController.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
-  ImageProvider get _imageProvider => widget.image ?? NetworkImage(widget.imageUrl!);
+  ImageProvider _providerFor(int index) {
+    if (widget.image != null) return widget.image!;
+    final urls = _urls;
+    if (index >= 0 && index < urls.length) {
+      return NetworkImage(urls[index]);
+    }
+    return NetworkImage(widget.imageUrl ?? '');
+  }
+
+  ImageProvider get _imageProvider => _providerFor(_currentIndex);
 
   void _close() => Navigator.of(context).maybePop();
 
@@ -103,9 +135,6 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
     _updateZoomState();
   }
 
-  // While not zoomed, a one-finger drag moves the photo vertically to dismiss.
-  // InteractiveViewer reports it (with panning disabled), so pinch-to-zoom and
-  // the drag never fight over the gesture.
   void _handleInteractionUpdate(ScaleUpdateDetails details) {
     if (_isZoomed || details.pointerCount > 1) return;
     setState(() => _dragOffset += details.focalPointDelta.dy);
@@ -122,17 +151,17 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
     }
   }
 
-  Widget _buildPlaceholder() {
+  Widget _buildPlaceholder([int? index]) {
     final width = widget.thumbnailCacheWidth;
+    final provider = index != null ? _providerFor(index) : _imageProvider;
     if (width == null) {
       return const Center(child: CircularProgressIndicator(color: Colors.white));
     }
-    // Same provider key as Image.network/Image.memory(cacheWidth: width): already in cache.
     return Stack(
       alignment: Alignment.center,
       children: [
         Image(
-          image: ResizeImage(_imageProvider, width: width),
+          image: ResizeImage(provider, width: width),
           fit: BoxFit.contain,
           errorBuilder: (_, _, _) => const SizedBox.shrink(),
         ),
@@ -143,12 +172,39 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundOpacity = 1 - (_dragOffset.abs() / 400).clamp(0.0, 0.6);
-    final chromeOpacity = _dragOffset == 0 ? 1.0 : 0.0;
+    final backgroundOpacity = (1.0 - (_dragOffset.abs() / 300)).clamp(0.0, 1.0);
+    final chromeOpacity = (1.0 - (_dragOffset.abs() / 80)).clamp(0.0, 1.0);
+    final hasMultiple = _urls.length > 1;
+
+    final String? subtitleText;
+    if (hasMultiple) {
+      final countText = '${_currentIndex + 1} de ${_urls.length}';
+      subtitleText = widget.subtitle != null ? '${widget.subtitle} · $countText' : countText;
+    } else {
+      subtitleText = widget.subtitle;
+    }
 
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): _close,
+        if (hasMultiple) ...{
+          const SingleActivator(LogicalKeyboardKey.arrowLeft): () {
+            if (_currentIndex > 0) {
+              _pageController.previousPage(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+              );
+            }
+          },
+          const SingleActivator(LogicalKeyboardKey.arrowRight): () {
+            if (_currentIndex < _urls.length - 1) {
+              _pageController.nextPage(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+              );
+            }
+          },
+        },
       },
       child: Focus(
         autofocus: true,
@@ -159,46 +215,143 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: GestureDetector(
-                    onDoubleTapDown: (details) => _doubleTapDetails = details,
-                    onDoubleTap: _handleDoubleTap,
-                    child: InteractiveViewer(
-                      transformationController: _transformController,
-                      minScale: 1,
-                      maxScale: 5,
-                      panEnabled: _isZoomed,
-                      onInteractionUpdate: _handleInteractionUpdate,
-                      onInteractionEnd: _handleInteractionEnd,
-                      child: Transform.translate(
-                        offset: Offset(0, _dragOffset),
-                        child: Center(
-                          child: Hero(
-                            tag: widget.heroTag,
-                            child: Image(
-                              image: _imageProvider,
-                              fit: BoxFit.contain,
-                              loadingBuilder: (context, child, progress) =>
-                                  progress == null ? child : _buildPlaceholder(),
-                              errorBuilder: (_, _, _) => const Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.broken_image_rounded, color: Colors.white70, size: 48),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    'No se pudo cargar la imagen',
-                                    style: TextStyle(color: Colors.white70),
+                  child: hasMultiple
+                      ? PageView.builder(
+                          controller: _pageController,
+                          physics: _isZoomed
+                              ? const NeverScrollableScrollPhysics()
+                              : const BouncingScrollPhysics(),
+                          itemCount: _urls.length,
+                          onPageChanged: (i) {
+                            setState(() {
+                              _currentIndex = i;
+                              _transformController.value = Matrix4.identity();
+                              _isZoomed = false;
+                            });
+                          },
+                          itemBuilder: (context, i) {
+                            return GestureDetector(
+                              onDoubleTapDown: (details) => _doubleTapDetails = details,
+                              onDoubleTap: _handleDoubleTap,
+                              child: InteractiveViewer(
+                                transformationController: _currentIndex == i ? _transformController : null,
+                                minScale: 1,
+                                maxScale: 5,
+                                panEnabled: _isZoomed,
+                                onInteractionUpdate: _handleInteractionUpdate,
+                                onInteractionEnd: _handleInteractionEnd,
+                                child: Transform.translate(
+                                  offset: Offset(0, _dragOffset),
+                                  child: Center(
+                                    child: Image(
+                                      image: _providerFor(i),
+                                      fit: BoxFit.contain,
+                                      loadingBuilder: (context, child, progress) =>
+                                          progress == null ? child : _buildPlaceholder(i),
+                                      errorBuilder: (_, _, _) => const Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.broken_image_rounded, color: Colors.white70, size: 48),
+                                          SizedBox(height: 8),
+                                          Text(
+                                            'No se pudo cargar la imagen',
+                                            style: TextStyle(color: Colors.white70),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
-                                ],
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                      : GestureDetector(
+                          onDoubleTapDown: (details) => _doubleTapDetails = details,
+                          onDoubleTap: _handleDoubleTap,
+                          child: InteractiveViewer(
+                            transformationController: _transformController,
+                            minScale: 1,
+                            maxScale: 5,
+                            panEnabled: _isZoomed,
+                            onInteractionUpdate: _handleInteractionUpdate,
+                            onInteractionEnd: _handleInteractionEnd,
+                            child: Transform.translate(
+                              offset: Offset(0, _dragOffset),
+                              child: Center(
+                                child: Hero(
+                                  tag: widget.heroTag,
+                                  child: Image(
+                                    image: _imageProvider,
+                                    fit: BoxFit.contain,
+                                    loadingBuilder: (context, child, progress) =>
+                                        progress == null ? child : _buildPlaceholder(),
+                                    errorBuilder: (_, _, _) => const Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.broken_image_rounded, color: Colors.white70, size: 48),
+                                        SizedBox(height: 8),
+                                        Text(
+                                          'No se pudo cargar la imagen',
+                                          style: TextStyle(color: Colors.white70),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
                 ),
 
-                // Top bar: close button + optional sender/time.
+                // Desktop Prev/Next Buttons
+                if (hasMultiple) ...[
+                  if (_currentIndex > 0)
+                    Positioned(
+                      left: 16,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: IconButton.filledTonal(
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black.withValues(alpha: 0.6),
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                          onPressed: () {
+                            _pageController.previousPage(
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeOut,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  if (_currentIndex < _urls.length - 1)
+                    Positioned(
+                      right: 16,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: IconButton.filledTonal(
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black.withValues(alpha: 0.6),
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.arrow_forward_ios_rounded),
+                          onPressed: () {
+                            _pageController.nextPage(
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeOut,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                ],
+
+                // Top bar: close button + optional sender/time and photo counter
                 Positioned(
                   top: 0,
                   left: 0,
@@ -243,9 +396,9 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
                                             fontSize: 15,
                                           ),
                                         ),
-                                      if (widget.subtitle != null)
+                                      if (subtitleText != null)
                                         Text(
-                                          widget.subtitle!,
+                                          subtitleText,
                                           style: const TextStyle(color: Colors.white70, fontSize: 12),
                                         ),
                                     ],

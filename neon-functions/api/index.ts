@@ -1109,9 +1109,15 @@ app.post("/api/posts", async (c) => {
 
     const body = await c.req.json().catch(() => ({}));
     const content = typeof body.content === "string" ? body.content.trim() : "";
-    const imageUrl = typeof body.imageUrl === "string" && body.imageUrl.trim().length > 0 ? body.imageUrl.trim() : null;
+    const rawImages: unknown[] = Array.isArray(body.imageUrls)
+      ? body.imageUrls
+      : (typeof body.imageUrl === "string" && body.imageUrl.trim().length > 0 ? [body.imageUrl] : []);
+    const imageUrls = rawImages
+      .filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+      .map((u) => u.trim());
+    const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
 
-    if (!content && !imageUrl) {
+    if (!content && imageUrls.length === 0) {
       return c.json({ success: false, error: "La publicación debe tener texto o una imagen." }, 400);
     }
 
@@ -1120,17 +1126,17 @@ app.post("/api/posts", async (c) => {
       `INSERT INTO public.posts (author_id, content, image_url, visibility, created_at, updated_at)
        VALUES ($1, $2, $3, 'public', now(), now())
        RETURNING id, author_id, content, image_url, likes_count, comments_count, created_at`,
-      [auth.userId, content || null, imageUrl]
+      [auth.userId, content || null, primaryImageUrl]
     );
 
     const postRow = insertRes.rows[0];
 
-    // If imageUrl exists, also populate post_media for relational consistency
-    if (imageUrl) {
+    // Populate post_media for each image
+    for (let i = 0; i < imageUrls.length; i++) {
       await p.query(
         `INSERT INTO public.post_media (post_id, media_type, media_url, order_index, created_at)
-         VALUES ($1, 'image', $2, 0, now())`,
-        [postRow.id, imageUrl]
+         VALUES ($1, 'image', $2, $3, now())`,
+        [postRow.id, imageUrls[i], i]
       );
     }
 
@@ -1152,6 +1158,7 @@ app.post("/api/posts", async (c) => {
         isVerified: Boolean(author?.is_verified),
         content: postRow.content || "",
         imageUrl: postRow.image_url,
+        imageUrls: imageUrls.length > 0 ? imageUrls : (postRow.image_url ? [postRow.image_url] : []),
         likesCount: postRow.likes_count || 0,
         commentsCount: postRow.comments_count || 0,
         repostsCount: 0,
@@ -1181,6 +1188,12 @@ function purgeExpiredPosts(p: Pool): void {
 
 // Helper for formatting post rows
 function mapPostRow(row: any) {
+  const mediaUrls: string[] = Array.isArray(row.media_urls)
+    ? row.media_urls.filter((u: any): u is string => typeof u === "string" && u.trim().length > 0)
+    : [];
+  const imageUrls = mediaUrls.length > 0 ? mediaUrls : (row.image_url ? [row.image_url] : []);
+  const primaryImageUrl = row.image_url || (imageUrls.length > 0 ? imageUrls[0] : null);
+
   return {
     id: row.id,
     authorId: row.author_id,
@@ -1189,7 +1202,8 @@ function mapPostRow(row: any) {
     authorAvatarUrl: row.author_avatar_url,
     isVerified: Boolean(row.author_is_verified),
     content: row.content || "",
-    imageUrl: row.image_url || null,
+    imageUrl: primaryImageUrl,
+    imageUrls: imageUrls,
     likesCount: Number(row.likes_count || 0),
     commentsCount: Number(row.comments_count || 0),
     repostsCount: 0,
@@ -1219,6 +1233,7 @@ app.get("/api/posts/feed", async (c) => {
           p.author_id,
           p.content,
           COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+          COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
           p.likes_count,
           p.comments_count,
           p.created_at,
@@ -1250,6 +1265,7 @@ app.get("/api/posts/feed", async (c) => {
         p.author_id,
         p.content,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+        COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
         p.likes_count,
         p.comments_count,
         p.created_at,
@@ -1303,6 +1319,7 @@ app.get("/api/posts/following", async (c) => {
         p.author_id,
         p.content,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+        COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
         p.likes_count,
         p.comments_count,
         p.created_at,
@@ -1379,6 +1396,7 @@ app.get("/api/posts/user/:target", async (c) => {
         p.author_id,
         p.content,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
+        COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
         p.likes_count,
         p.comments_count,
         p.created_at,

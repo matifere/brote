@@ -181,10 +181,16 @@ class _PostCardState extends State<PostCard> {
     final authorAvatar = widget.post.authorAvatarUrl;
     final parsed = widget.post.parsedContent;
     final timeLeft = widget.post.timeLeft;
+    final rawImages = widget.post.imageUrls.isNotEmpty
+        ? widget.post.imageUrls
+        : (widget.post.imageUrl != null && widget.post.imageUrl!.isNotEmpty
+            ? [widget.post.imageUrl!]
+            : const <String>[]);
     final isCoverImage = parsed.review != null &&
         parsed.review!.category == RatingCategory.movie &&
-        widget.post.imageUrl != null &&
-        widget.post.imageUrl == (_moviePosterUrl ?? widget.post.imageUrl);
+        rawImages.length == 1 &&
+        rawImages.first == (_moviePosterUrl ?? widget.post.imageUrl);
+    final postImages = isCoverImage ? const <String>[] : rawImages;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -332,50 +338,10 @@ class _PostCardState extends State<PostCard> {
                     ),
                   ),
 
-                // Post Image Attachment (skip if already displayed as movie poster in review)
-                if (!isCoverImage && widget.post.imageUrl != null && widget.post.imageUrl!.isNotEmpty) ...[
+                // Post Media Attachment(s) (skip if already displayed as movie poster in review)
+                if (postImages.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  GestureDetector(
-                    onTap: () => openFullScreenImage(
-                      context,
-                      imageUrl: widget.post.imageUrl!,
-                      heroTag: 'post-image-${widget.post.id}',
-                    ),
-                    child: Hero(
-                      tag: 'post-image-${widget.post.id}',
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          constraints: const BoxConstraints(maxHeight: 380),
-                          width: double.infinity,
-                          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                          child: Image.network(
-                            widget.post.imageUrl!,
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                height: 200,
-                                alignment: Alignment.center,
-                                child: CircularProgressIndicator(
-                                  value: loadingProgress.expectedTotalBytes != null
-                                      ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                      : null,
-                                  strokeWidth: 2,
-                                ),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) => Container(
-                              height: 120,
-                              alignment: Alignment.center,
-                              child: Icon(Icons.broken_image_rounded, color: colorScheme.outline),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  _buildMediaGrid(postImages, colorScheme),
                 ],
 
                 const SizedBox(height: 14),
@@ -569,6 +535,185 @@ class _PostCardState extends State<PostCard> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMediaGrid(List<String> images, ColorScheme colorScheme) {
+    if (images.isEmpty) return const SizedBox.shrink();
+
+    if (images.length == 1) {
+      return GestureDetector(
+        onTap: () => openFullScreenImage(
+          context,
+          imageUrl: images[0],
+          imageUrls: images,
+          initialIndex: 0,
+          heroTag: 'post-image-${widget.post.id}-0',
+        ),
+        child: Hero(
+          tag: 'post-image-${widget.post.id}-0',
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              constraints: const BoxConstraints(maxHeight: 380),
+              width: double.infinity,
+              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+              child: _buildNetworkImage(images[0], colorScheme),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (images.length == 2) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: SizedBox(
+          height: 220,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _buildGridItem(images, 0, colorScheme)),
+              const SizedBox(width: 4),
+              Expanded(child: _buildGridItem(images, 1, colorScheme)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (images.length == 3) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: SizedBox(
+          height: 260,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(flex: 3, child: _buildGridItem(images, 0, colorScheme)),
+              const SizedBox(width: 4),
+              Expanded(
+                flex: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: _buildGridItem(images, 1, colorScheme)),
+                    const SizedBox(height: 4),
+                    Expanded(child: _buildGridItem(images, 2, colorScheme)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 4 or more images: 2x2 grid
+    final extraCount = images.length - 4;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: SizedBox(
+        height: 280,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _buildGridItem(images, 0, colorScheme)),
+                  const SizedBox(height: 4),
+                  Expanded(child: _buildGridItem(images, 1, colorScheme)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _buildGridItem(images, 2, colorScheme)),
+                  const SizedBox(height: 4),
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _buildGridItem(images, 3, colorScheme),
+                        if (extraCount > 0)
+                          GestureDetector(
+                            onTap: () => openFullScreenImage(
+                              context,
+                              imageUrls: images,
+                              initialIndex: 3,
+                              heroTag: 'post-image-${widget.post.id}-3',
+                            ),
+                            child: Container(
+                              color: Colors.black.withValues(alpha: 0.65),
+                              alignment: Alignment.center,
+                              child: Text(
+                                '+$extraCount',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGridItem(List<String> images, int index, ColorScheme colorScheme) {
+    final url = images[index];
+    final heroTag = 'post-image-${widget.post.id}-$index';
+    return GestureDetector(
+      onTap: () => openFullScreenImage(
+        context,
+        imageUrls: images,
+        initialIndex: index,
+        heroTag: heroTag,
+      ),
+      child: Hero(
+        tag: heroTag,
+        child: Container(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          child: _buildNetworkImage(url, colorScheme),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNetworkImage(String url, ColorScheme colorScheme) {
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Container(
+          alignment: Alignment.center,
+          child: CircularProgressIndicator(
+            value: loadingProgress.expectedTotalBytes != null
+                ? loadingProgress.cumulativeBytesLoaded /
+                    loadingProgress.expectedTotalBytes!
+                : null,
+            strokeWidth: 2,
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) => Container(
+        alignment: Alignment.center,
+        child: Icon(Icons.broken_image_rounded, color: colorScheme.outline),
       ),
     );
   }

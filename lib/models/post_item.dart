@@ -9,6 +9,7 @@ class PostItem {
   final bool isVerified;
   final String content;
   final String? imageUrl;
+  final List<String> imageUrls;
   final DateTime? createdAt;
   int likesCount;
   int commentsCount;
@@ -26,6 +27,7 @@ class PostItem {
     this.isVerified = false,
     required this.content,
     this.imageUrl,
+    this.imageUrls = const [],
     this.createdAt,
     this.likesCount = 0,
     this.commentsCount = 0,
@@ -75,6 +77,15 @@ class PostItem {
     if (dateRaw != null) {
       dt = DateTime.tryParse(dateRaw.toString())?.toLocal();
     }
+    final rawUrls = json['imageUrls'] ?? json['image_urls'] ?? json['media_urls'];
+    final parsedUrls = (rawUrls is List)
+        ? rawUrls.map((e) => e.toString()).where((u) => u.isNotEmpty).toList()
+        : <String>[];
+    final singleUrl = json['imageUrl'] as String? ?? json['image_url'] as String?;
+    final allUrls = parsedUrls.isNotEmpty
+        ? parsedUrls
+        : (singleUrl != null && singleUrl.isNotEmpty ? [singleUrl] : const <String>[]);
+
     return PostItem(
       id: json['id'].toString(),
       authorId: json['authorId']?.toString() ?? json['author_id']?.toString() ?? '',
@@ -83,7 +94,8 @@ class PostItem {
       authorAvatarUrl: json['authorAvatarUrl'] as String? ?? json['author_avatar_url'] as String?,
       isVerified: json['isVerified'] as bool? ?? json['is_verified'] as bool? ?? false,
       content: json['content'] as String? ?? json['text'] as String? ?? '',
-      imageUrl: json['imageUrl'] as String? ?? json['image_url'] as String?,
+      imageUrl: singleUrl ?? (allUrls.isNotEmpty ? allUrls.first : null),
+      imageUrls: allUrls,
       createdAt: dt,
       likesCount: (json['likesCount'] as num? ?? json['likes_count'] as num? ?? 0).toInt(),
       commentsCount: (json['commentsCount'] as num? ?? json['comments_count'] as num? ?? 0).toInt(),
