@@ -143,7 +143,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       builder: (context, constraints) {
         final isDesktop = constraints.maxWidth >= 720;
         final isLargeDesktop = constraints.maxWidth >= 1000;
-        final showRightSidebar = constraints.maxWidth >= 1150;
+        final showRightSidebar = constraints.maxWidth >= 1150 && _currentIndex != 3;
 
         // Mobile layout (< 720px)
         if (!isDesktop) {
@@ -195,7 +195,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         }
 
         // Desktop / Web layout (>= 720px)
-        final maxGroupWidth = showRightSidebar ? 1260.0 : 960.0;
+        final maxGroupWidth = showRightSidebar ? 1260.0 : (_currentIndex == 3 ? 1200.0 : 960.0);
 
         return Scaffold(
           backgroundColor: colorScheme.surface,

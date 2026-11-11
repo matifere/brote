@@ -9,17 +9,20 @@ import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/chat_crypto.dart';
 import '../widgets/chat_password_dialog.dart';
+import '../widgets/chats_sidebar.dart';
 import '../widgets/full_screen_image_viewer.dart';
 import 'profile_screen.dart';
 
 class ChatConversationScreen extends StatefulWidget {
   final String conversationId;
   final UserProfile otherParticipant;
+  final bool isEmbedded;
 
   const ChatConversationScreen({
     super.key,
     required this.conversationId,
     required this.otherParticipant,
+    this.isEmbedded = false,
   });
 
   @override
@@ -32,6 +35,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   final FocusNode _inputFocusNode = FocusNode();
   final ImagePicker _picker = ImagePicker();
 
+  late String _activeConversationId;
+  late UserProfile _activeOtherParticipant;
   List<ChatMessage> _messages = [];
   late UserProfile _otherParticipant;
   bool _isLoading = true;
@@ -49,6 +54,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   void initState() {
     super.initState();
+    _activeConversationId = widget.conversationId;
+    _activeOtherParticipant = widget.otherParticipant;
     _otherParticipant = widget.otherParticipant;
     ChatCrypto().status.addListener(_onCryptoStatusChanged);
     _loadMessages();
@@ -58,6 +65,22 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 3500), (_) {
       _pollNewMessages();
     });
+  }
+
+  @override
+  void didUpdateWidget(ChatConversationScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId) {
+      _activeConversationId = widget.conversationId;
+      _activeOtherParticipant = widget.otherParticipant;
+      _otherParticipant = widget.otherParticipant;
+      _messages.clear();
+      _isLoading = true;
+      _conversationKey = null;
+      _decrypted.clear();
+      _loadMessages();
+      _prepareEncryption();
+    }
   }
 
   @override
@@ -607,322 +630,375 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final media = MediaQuery.sizeOf(context);
+    final isDesktop = media.width >= 720 && media.width > media.height;
+
+    // Desktop Standalone Mode: Display split screen with all available chats on the left
+    if (isDesktop && !widget.isEmbedded) {
+      return Scaffold(
+        backgroundColor: colorScheme.surface,
+        body: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 1200),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              border: Border.symmetric(
+                vertical: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                  width: 1,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 320,
+                  child: ChatsSidebar(
+                    headerLeading: Navigator.of(context).canPop()
+                        ? IconButton(
+                            icon: const Icon(Icons.arrow_back_rounded),
+                            tooltip: 'Volver',
+                            onPressed: () => Navigator.of(context).pop(),
+                          )
+                        : null,
+                    selectedConversationId: _activeConversationId,
+                    onSelectChat: (chat) {
+                      if (chat.id == _activeConversationId) return;
+                      setState(() {
+                        _activeConversationId = chat.id;
+                        _activeOtherParticipant = chat.otherParticipant ??
+                            UserProfile(
+                              id: chat.id,
+                              username: chat.username,
+                              displayName: chat.displayName,
+                              avatarUrl: chat.avatarUrl,
+                            );
+                      });
+                    },
+                  ),
+                ),
+                VerticalDivider(
+                  width: 1,
+                  thickness: 1,
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                ),
+                Expanded(
+                  child: ChatConversationScreen(
+                    key: ValueKey(_activeConversationId),
+                    conversationId: _activeConversationId,
+                    otherParticipant: _activeOtherParticipant,
+                    isEmbedded: true,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     final displayName = _otherParticipant.displayName;
     final username = _otherParticipant.username;
     final avatarUrl = _otherParticipant.avatarUrl;
     final isPrivate = _otherParticipant.isPrivate;
-    final isDesktop = MediaQuery.sizeOf(context).width > 720;
 
-    return Scaffold(
-      backgroundColor: colorScheme.surface,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(kToolbarHeight),
-        child: Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 720),
-            decoration: isDesktop
-                ? BoxDecoration(
-                    color: colorScheme.surface,
-                    border: Border.symmetric(
-                      vertical: BorderSide(
-                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
-                        width: 1,
-                      ),
-                    ),
-                  )
-                : null,
-            child: AppBar(
-              titleSpacing: 0,
-              backgroundColor: colorScheme.surface,
-              scrolledUnderElevation: 0,
-              title: InkWell(
-                onTap: _openParticipantProfile,
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 19,
-                        backgroundColor: colorScheme.primaryContainer,
-                        backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
-                            ? NetworkImage(avatarUrl)
-                            : null,
-                        onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
-                            ? (exception, stackTrace) {}
-                            : null,
-                        child: (avatarUrl == null || avatarUrl.isEmpty)
-                            ? Text(
-                                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                                style: TextStyle(
-                                  color: colorScheme.onPrimaryContainer,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                ),
-                              )
-                            : null,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
+    final conversationBody = Column(
+      children: [
+        _buildEncryptionBanner(colorScheme, textTheme),
+
+        // Messages stream
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _messages.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    displayName,
-                                    style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                if (_otherParticipant.isVerified) ...[
-                                  const SizedBox(width: 4),
-                                  Icon(Icons.verified_rounded, size: 14, color: colorScheme.primary),
-                                ],
-                                if (isPrivate) ...[
-                                  const SizedBox(width: 4),
-                                  Icon(Icons.lock_rounded, size: 12, color: colorScheme.onSurfaceVariant),
-                                ],
-                              ],
-                            ),
+                            Icon(Icons.chat_bubble_outline_rounded,
+                                size: 48, color: colorScheme.outline),
+                            const SizedBox(height: 12),
                             Text(
-                              '@$username',
-                              style: textTheme.bodySmall?.copyWith(
+                              'Iniciá la conversación',
+                              style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Enviá un mensaje para chatear con @$username.',
+                              textAlign: TextAlign.center,
+                              style: textTheme.bodyMedium?.copyWith(
                                 color: colorScheme.onSurfaceVariant,
-                                fontSize: 11,
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-      body: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 720),
-          decoration: BoxDecoration(
-            color: colorScheme.surface,
-            border: Border.symmetric(
-              vertical: BorderSide(
-                color: colorScheme.outlineVariant.withValues(alpha: 0.35),
-                width: 1,
-              ),
-            ),
-          ),
-          child: Column(
-            children: [
-              _buildEncryptionBanner(colorScheme, textTheme),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final msg = _messages[index];
+                        final isMe = msg.isMe;
+                        final isEncrypted = ChatCipher.isEncrypted(msg.content);
+                        final payload = _decrypted[msg.id];
+                        final text = isEncrypted ? (payload?.text ?? '') : msg.content;
+                        final secureImage = payload?.image;
+                        final hasMedia =
+                            (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) || secureImage != null;
+                        final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
 
-              // Messages stream
-              Expanded(
-                child: _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _messages.isEmpty
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(32),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.chat_bubble_outline_rounded,
-                                      size: 48, color: colorScheme.outline),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'Iniciá la conversación',
-                                    style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Enviá un mensaje para chatear con @$username.',
-                                    textAlign: TextAlign.center,
-                                    style: textTheme.bodyMedium?.copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
+                        return Align(
+                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            constraints: BoxConstraints(
+                              maxWidth: (MediaQuery.of(context).size.width * 0.76).clamp(200.0, 480.0),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isMe
+                                  ? colorScheme.primary
+                                  : colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.only(
+                                topLeft: const Radius.circular(16),
+                                topRight: const Radius.circular(16),
+                                bottomLeft: Radius.circular(isMe ? 16 : 4),
+                                bottomRight: Radius.circular(isMe ? 4 : 16),
                               ),
                             ),
-                          )
-                        : ListView.builder(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            itemCount: _messages.length,
-                            itemBuilder: (context, index) {
-                              final msg = _messages[index];
-                              final isMe = msg.isMe;
-                              final isEncrypted = ChatCipher.isEncrypted(msg.content);
-                              final payload = _decrypted[msg.id];
-                              final text = isEncrypted ? (payload?.text ?? '') : msg.content;
-                              final secureImage = payload?.image;
-                              final hasMedia =
-                                  (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) || secureImage != null;
-                              final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
+                            child: Column(
+                              crossAxisAlignment:
+                                  isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                              children: [
+                                // Optional Media Image
+                                if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty)
+                                  _buildMediaThumbnail(msg, isMe, colorScheme),
+                                if (secureImage != null)
+                                  _buildSecureThumbnail(msg, secureImage, isMe, colorScheme),
+                                if (hasMedia && text.isNotEmpty) const SizedBox(height: 8),
 
-                              return Align(
-                                alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  constraints: BoxConstraints(
-                                    maxWidth: (MediaQuery.of(context).size.width * 0.76).clamp(200.0, 480.0),
-                                  ),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: isMe
-                                    ? colorScheme.primary
-                                    : colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-                                borderRadius: BorderRadius.only(
-                                  topLeft: const Radius.circular(16),
-                                  topRight: const Radius.circular(16),
-                                  bottomLeft: Radius.circular(isMe ? 16 : 4),
-                                  bottomRight: Radius.circular(isMe ? 4 : 16),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment:
-                                    isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                children: [
-                                  // Optional Media Image
-                                  if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty)
-                                    _buildMediaThumbnail(msg, isMe, colorScheme),
-                                  if (secureImage != null)
-                                    _buildSecureThumbnail(msg, secureImage, isMe, colorScheme),
-                                  if (hasMedia && text.isNotEmpty) const SizedBox(height: 8),
-
-                                  // Encrypted message this device can't read (locked or old keys)
-                                  if (isEncrypted && payload == null)
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.lock_outline_rounded,
-                                            size: 14, color: textColor.withValues(alpha: 0.8)),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          'Mensaje cifrado',
-                                          style: TextStyle(
-                                            color: textColor.withValues(alpha: 0.8),
-                                            fontSize: 14.5,
-                                            fontStyle: FontStyle.italic,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-
-                                  // Text content
-                                  if (text.isNotEmpty)
-                                    Text(
-                                      text,
-                                      style: TextStyle(
-                                        color: textColor,
-                                        fontSize: 14.5,
-                                        height: 1.35,
-                                      ),
-                                    ),
-                                  const SizedBox(height: 4),
-
-                                  // Timestamp & checkmark
+                                // Encrypted message this device can't read (locked or old keys)
+                                if (isEncrypted && payload == null)
                                   Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      if (isEncrypted) ...[
-                                        Icon(
-                                          Icons.lock_rounded,
-                                          size: 10,
-                                          color: isMe
-                                              ? colorScheme.onPrimary.withValues(alpha: 0.75)
-                                              : colorScheme.onSurfaceVariant,
-                                        ),
-                                        const SizedBox(width: 3),
-                                      ],
+                                      Icon(Icons.lock_outline_rounded,
+                                          size: 14, color: textColor.withValues(alpha: 0.8)),
+                                      const SizedBox(width: 6),
                                       Text(
-                                        msg.timeFormatted,
+                                        'Mensaje cifrado',
                                         style: TextStyle(
-                                          color: isMe
-                                              ? colorScheme.onPrimary.withValues(alpha: 0.75)
-                                              : colorScheme.onSurfaceVariant,
-                                          fontSize: 10.5,
+                                          color: textColor.withValues(alpha: 0.8),
+                                          fontSize: 14.5,
+                                          fontStyle: FontStyle.italic,
                                         ),
                                       ),
                                     ],
                                   ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-          ),
 
-          // Message input bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerLow,
-              border: Border(top: BorderSide(color: colorScheme.outlineVariant, width: 0.5)),
+                                // Text content
+                                if (text.isNotEmpty)
+                                  Text(
+                                    text,
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 14.5,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                const SizedBox(height: 4),
+
+                                // Timestamp
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (isEncrypted) ...[
+                                      Icon(
+                                        Icons.lock_rounded,
+                                        size: 10,
+                                        color: isMe
+                                            ? colorScheme.onPrimary.withValues(alpha: 0.75)
+                                            : colorScheme.onSurfaceVariant,
+                                      ),
+                                      const SizedBox(width: 3),
+                                    ],
+                                    Text(
+                                      msg.timeFormatted,
+                                      style: TextStyle(
+                                        color: isMe
+                                            ? colorScheme.onPrimary.withValues(alpha: 0.75)
+                                            : colorScheme.onSurfaceVariant,
+                                        fontSize: 10.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+        ),
+
+        // Message input bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerLow,
+            border: Border(top: BorderSide(color: colorScheme.outlineVariant, width: 0.5)),
+          ),
+          child: SafeArea(
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.add_photo_alternate_outlined, color: colorScheme.primary),
+                  tooltip: 'Enviar foto',
+                  onPressed: _showMediaPickerSheet,
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _messageController,
+                    focusNode: _inputFocusNode,
+                    maxLines: 4,
+                    minLines: 1,
+                    keyboardType: TextInputType.text,
+                    textInputAction: TextInputAction.send,
+                    onEditingComplete: () {},
+                    decoration: InputDecoration(
+                      hintText: 'Escribí un mensaje...',
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      fillColor: colorScheme.surface,
+                      filled: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    onSubmitted: (_) => _handleSendMessage(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  style: IconButton.styleFrom(
+                    backgroundColor: colorScheme.primary,
+                    foregroundColor: colorScheme.onPrimary,
+                  ),
+                  icon: _isSending
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.send_rounded, size: 18),
+                  onPressed: _isSending ? null : () => _handleSendMessage(),
+                ),
+              ],
             ),
-            child: SafeArea(
+          ),
+        ),
+      ],
+    );
+
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: AppBar(
+          automaticallyImplyLeading: !widget.isEmbedded,
+          titleSpacing: widget.isEmbedded ? 16 : 0,
+          backgroundColor: colorScheme.surface,
+          scrolledUnderElevation: 0,
+          title: InkWell(
+            onTap: _openParticipantProfile,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: Icon(Icons.add_photo_alternate_outlined, color: colorScheme.primary),
-                    tooltip: 'Enviar foto',
-                    onPressed: _showMediaPickerSheet,
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      focusNode: _inputFocusNode,
-                      maxLines: 4,
-                      minLines: 1,
-                      // Plain text keyboard so Enter sends (a multiline keyboard
-                      // would insert a newline on web/desktop instead).
-                      keyboardType: TextInputType.text,
-                      textInputAction: TextInputAction.send,
-                      // The default for "send" unfocuses the field after submitting.
-                      onEditingComplete: () {},
-                      decoration: InputDecoration(
-                        hintText: 'Escribí un mensaje...',
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        fillColor: colorScheme.surface,
-                        filled: true,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                      onSubmitted: (_) => _handleSendMessage(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    style: IconButton.styleFrom(
-                      backgroundColor: colorScheme.primary,
-                      foregroundColor: colorScheme.onPrimary,
-                    ),
-                    icon: _isSending
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  CircleAvatar(
+                    radius: 19,
+                    backgroundColor: colorScheme.primaryContainer,
+                    backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                        ? NetworkImage(avatarUrl)
+                        : null,
+                    onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
+                        ? (exception, stackTrace) {}
+                        : null,
+                    child: (avatarUrl == null || avatarUrl.isEmpty)
+                        ? Text(
+                            displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                            style: TextStyle(
+                              color: colorScheme.onPrimaryContainer,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
                           )
-                        : const Icon(Icons.send_rounded, size: 18),
-                    onPressed: _isSending ? null : () => _handleSendMessage(),
+                        : null,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                displayName,
+                                style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (_otherParticipant.isVerified) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.verified_rounded, size: 14, color: colorScheme.primary),
+                            ],
+                            if (isPrivate) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.lock_rounded, size: 12, color: colorScheme.onSurfaceVariant),
+                            ],
+                          ],
+                        ),
+                        Text(
+                          '@$username',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-        ],
+        ),
       ),
-    ),
-  ),
-);
+      body: widget.isEmbedded
+          ? conversationBody
+          : Center(
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 720),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  border: isDesktop
+                      ? Border.symmetric(
+                          vertical: BorderSide(
+                            color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                            width: 1,
+                          ),
+                        )
+                      : null,
+                ),
+                child: conversationBody,
+              ),
+            ),
+    );
   }
 }

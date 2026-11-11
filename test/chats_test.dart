@@ -51,4 +51,25 @@ void main() {
     expect(find.text('Nuevo mensaje'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
   });
+
+  testWidgets('desktop view shows chats menu on the left alongside active conversation', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ChatsScreen(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Left pane has the chats list menu
+    expect(find.text('Mensajes'), findsOneWidget);
+    // Right pane has the placeholder when no chat is chosen
+    expect(find.text('Tus mensajes'), findsOneWidget);
+  });
 }
