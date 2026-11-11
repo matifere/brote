@@ -5,6 +5,7 @@ import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/catalog_service.dart';
 import '../widgets/brote_logo.dart';
+import '../widgets/full_screen_image_viewer.dart';
 import '../widgets/rating_stars.dart';
 import '../widgets/post_card.dart';
 import 'auth_screen.dart';
@@ -34,6 +35,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       !_isOwnProfile && _currentProfile.isPrivate && !_currentProfile.isFollowing;
 
   bool _isFollowLoading = false;
+  final Set<RatingCategory> _expandedCategories = {};
   List<PostItem> _userPosts = [];
   bool _isLoadingPosts = true;
 
@@ -531,6 +533,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildRatingsSection(RatingCategory category, List<RatedItem> ratings, ColorScheme colorScheme, TextTheme textTheme) {
     final isMovie = category == RatingCategory.movie;
+    final isExpanded = _expandedCategories.contains(category);
+    final canExpand = ratings.length > 1;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -547,22 +552,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             if (ratings.isNotEmpty) ...[
               const SizedBox(width: 6),
-              Text(
-                '${ratings.length}',
-                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${ratings.length}',
+                  style: textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
             const Spacer(),
-            if (_isOwnProfile)
+            if (canExpand)
+              TextButton.icon(
+                onPressed: () => setState(() {
+                  if (isExpanded) {
+                    _expandedCategories.remove(category);
+                  } else {
+                    _expandedCategories.add(category);
+                  }
+                }),
+                icon: Icon(
+                  isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: colorScheme.primary,
+                ),
+                label: Text(
+                  isExpanded ? 'Comprimir' : 'Expandir',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.primary,
+                  ),
+                ),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            if (_isOwnProfile) ...[
+              if (canExpand) const SizedBox(width: 4),
               TextButton.icon(
                 onPressed: () => _openRatingSearch(category),
-                icon: const Icon(Icons.add_rounded, size: 18),
+                icon: const Icon(Icons.add_rounded, size: 16),
                 label: const Text('Calificar'),
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
-                  textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                 ),
               ),
+            ],
           ],
         ),
         const SizedBox(height: 6),
@@ -573,13 +622,90 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : 'Buscá temas o álbumes, calificalos y aparecen acá en tu descripción.',
             style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
           )
-        else
+        else if (isExpanded)
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: ratings.map((rating) => _buildRatingChip(rating, colorScheme, textTheme)).toList(),
+            children: [
+              for (final rating in ratings)
+                _buildRatingChip(rating, colorScheme, textTheme),
+              if (canExpand)
+                _buildExpandChip(
+                  category: category,
+                  isExpanded: true,
+                  colorScheme: colorScheme,
+                  textTheme: textTheme,
+                ),
+            ],
+          )
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            clipBehavior: Clip.none,
+            child: Row(
+              children: [
+                for (var i = 0; i < ratings.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  _buildRatingChip(ratings[i], colorScheme, textTheme),
+                ],
+                if (canExpand) ...[
+                  const SizedBox(width: 8),
+                  _buildExpandChip(
+                    category: category,
+                    isExpanded: false,
+                    colorScheme: colorScheme,
+                    textTheme: textTheme,
+                  ),
+                ],
+              ],
+            ),
           ),
       ],
+    );
+  }
+
+  Widget _buildExpandChip({
+    required RatingCategory category,
+    required bool isExpanded,
+    required ColorScheme colorScheme,
+    required TextTheme textTheme,
+  }) {
+    return InkWell(
+      onTap: () => setState(() {
+        if (isExpanded) {
+          _expandedCategories.remove(category);
+        } else {
+          _expandedCategories.add(category);
+        }
+      }),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.unfold_more_rounded,
+              size: 15,
+              color: colorScheme.primary,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              isExpanded ? 'Comprimir' : 'Ver todas',
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -590,7 +716,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ? CatalogService().getCachedPoster(rating.title, year: rating.year)
         : null;
 
-    return Container(
+    final chip = Container(
       padding: EdgeInsets.symmetric(horizontal: isMovie && posterUrl != null ? 8 : 10, vertical: 6),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
@@ -613,34 +739,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(width: 8),
           ],
-          Flexible(
-            child: Text.rich(
-              TextSpan(
-                children: [
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: rating.title,
+                  style: textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+                if (detail != null)
                   TextSpan(
-                    text: rating.title,
-                    style: textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: colorScheme.onSurface,
-                    ),
+                    text: isMovie ? ' $detail' : ' · $detail',
+                    style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
                   ),
-                  if (detail != null)
-                    TextSpan(
-                      text: isMovie ? ' $detail' : ' · $detail',
-                      style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                    ),
-                  const WidgetSpan(child: SizedBox(width: 6)),
-                  WidgetSpan(
-                    alignment: PlaceholderAlignment.middle,
-                    child: RatingStars(stars: rating.stars, size: 13),
-                  ),
-                ],
-              ),
+                const WidgetSpan(child: SizedBox(width: 6)),
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.middle,
+                  child: RatingStars(stars: rating.stars, size: 13),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
+
+    if (posterUrl != null) {
+      return GestureDetector(
+        onTap: () => openFullScreenImage(
+          context,
+          imageUrl: posterUrl,
+          heroTag: 'profile-rating-${rating.title}-${rating.year}',
+          title: rating.title,
+          subtitle: rating.detail,
+        ),
+        child: chip,
+      );
+    }
+
+    return chip;
   }
 
   Widget _buildPrivateAccountNotice(ColorScheme colorScheme, TextTheme textTheme) {

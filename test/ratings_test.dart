@@ -233,6 +233,34 @@ void main() {
       expect(find.textContaining('🎬', findRichText: true), findsNothing);
       expect(find.textContaining('🎵', findRichText: true), findsNothing);
       expect(find.text('Calificar'), findsNWidgets(2));
+      expect(find.text('Expandir'), findsOneWidget);
+    });
+
+    testWidgets('ProfileScreen expands and compresses ratings row when tapping the toggle button', (WidgetTester tester) async {
+      useView(tester, const Size(1080, 2400));
+
+      await tester.pumpWidget(const MaterialApp(home: ProfileScreen(profile: profileWithRatings)));
+      await tester.pumpAndSettle();
+
+      // Initially collapsed: shows single horizontal row with "Expandir" and "Ver todas"
+      expect(find.text('Expandir'), findsOneWidget);
+      expect(find.text('Ver todas'), findsOneWidget);
+
+      // Tap "Expandir"
+      await tester.tap(find.text('Expandir'));
+      await tester.pumpAndSettle();
+
+      // Now expanded: shows "Comprimir" in header and chip
+      expect(find.text('Comprimir'), findsNWidgets(2));
+      expect(find.text('Expandir'), findsNothing);
+
+      // Tap "Comprimir" in the header
+      await tester.tap(find.widgetWithText(TextButton, 'Comprimir'));
+      await tester.pumpAndSettle();
+
+      // Compressed back to horizontal row
+      expect(find.text('Expandir'), findsOneWidget);
+      expect(find.text('Ver todas'), findsOneWidget);
     });
 
     testWidgets('EditProfileScreen edits only the free text of the bio', (WidgetTester tester) async {
