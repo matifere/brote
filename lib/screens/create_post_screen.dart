@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/post_content.dart';
+import '../models/rating.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/catalog_service.dart';
+import '../widgets/review_picker.dart';
 
 class CreatePostScreen extends StatefulWidget {
   final UserProfile? profile;
@@ -30,10 +33,34 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   bool _showPreview = false;
   bool _isEphemeral = false;
 
+  /// Movie, song or album being reviewed, and its stars (0 = not chosen yet).
+  CatalogItem? _reviewItem;
+  int _reviewStars = 0;
+
   @override
   void dispose() {
     _textController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickReviewItem() async {
+    final item = await showReviewItemPicker(
+      context,
+      initialCategory: _reviewItem?.category ?? RatingCategory.movie,
+    );
+    if (item == null || !mounted) return;
+    setState(() {
+      // Keep the stars when swapping the item; a fresh review starts unrated.
+      if (_reviewItem == null) _reviewStars = 0;
+      _reviewItem = item;
+    });
+  }
+
+  void _removeReview() {
+    setState(() {
+      _reviewItem = null;
+      _reviewStars = 0;
+    });
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -118,7 +145,14 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _handlePublish() async {
     final text = _textController.text.trim();
-    if (text.isEmpty && _selectedImageBytes == null) {
+    final reviewItem = _reviewItem;
+    if (reviewItem != null && _reviewStars == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Elegí de 1 a 5 estrellas para tu reseña.')),
+      );
+      return;
+    }
+    if (text.isEmpty && _selectedImageBytes == null && reviewItem == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Escribí algo o seleccioná una imagen para publicar.')),
       );
@@ -146,12 +180,23 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         }
       }
 
-      // Create post on Neon backend (the 24 h mark travels in the text)
-      final content = PostContent(body: text, isEphemeral: _isEphemeral).compose();
+      // Create post on Neon backend (the review header and 24 h mark travel in the text)
+      final rating = reviewItem?.toRating(_reviewStars);
+      final content = PostContent(body: text, review: rating, isEphemeral: _isEphemeral).compose();
       final post = await AuthService().createPost(
         content: content.isNotEmpty ? content : null,
         imageUrl: uploadedImageUrl,
       );
+
+      // Like rating from the profile, a published review also lands in the
+      // user's ratings; the post stays published even if that part fails.
+      String? bioError;
+      if (post != null && rating != null) {
+        final bioResponse = await AuthService().updateBioRatings((bio) => bio.withRating(rating));
+        if (!bioResponse.success) {
+          bioError = bioResponse.error ?? 'No se pudo guardar la calificación en tu perfil.';
+        }
+      }
 
       if (!mounted) return;
       setState(() => _isPublishing = false);
@@ -164,13 +209,22 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           _selectedImageName = null;
           _showPreview = false;
           _isEphemeral = false;
+          _reviewItem = null;
+          _reviewStars = 0;
         });
+
+        final String message;
+        if (rating == null) {
+          message = '¡Publicación creada con éxito!';
+        } else if (bioError == null) {
+          message = '¡Publicaste tu reseña de "${rating.title}"!';
+        } else {
+          message = 'Publicaste tu reseña, pero no se guardó en tu descripción. $bioError';
+        }
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(wasEphemeral
-                ? '¡Publicación creada! Se deja de mostrar en 24 horas.'
-                : '¡Publicación creada con éxito!'),
+            content: Text(wasEphemeral ? '$message Se deja de mostrar en 24 horas.' : message),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -291,6 +345,18 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             ),
             const SizedBox(height: 16),
 
+            // Review of a movie or music (shown above the opinion, like in the feed)
+            if (_reviewItem != null) ...[
+              ReviewDraftCard(
+                item: _reviewItem!,
+                stars: _reviewStars,
+                onStarsChanged: (value) => setState(() => _reviewStars = value),
+                onChange: _pickReviewItem,
+                onRemove: _removeReview,
+              ),
+              const SizedBox(height: 12),
+            ],
+
             // Content textfield or Markdown Preview
             if (_showPreview)
               Container(
@@ -352,8 +418,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 onChanged: (_) => setState(() {}),
                 style: textTheme.bodyLarge,
                 decoration: InputDecoration(
-                  hintText:
-                      '¿Qué estás pensando?\nPodés usar Markdown, listas o bloques de código con ``` ...',
+                  hintText: _reviewItem != null
+                      ? '¿Qué te pareció "${_reviewItem!.title}"? (opcional)'
+                      : '¿Qué estás pensando?\nPodés usar Markdown, listas o bloques de código con ``` ...',
                   hintStyle: textTheme.bodyLarge?.copyWith(
                     color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
                   ),
@@ -411,8 +478,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             Divider(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
             const SizedBox(height: 12),
 
-            // Media attachment options (Image only, as requested)
-            Row(
+            // Attachments: photo and movie/music review
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 OutlinedButton.icon(
                   icon: const Icon(Icons.add_photo_alternate_rounded, size: 20),
@@ -423,7 +493,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                   ),
                 ),
-                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.rate_review_outlined, size: 20),
+                  label: Text(_reviewItem == null ? 'Reseña' : 'Cambiar reseña'),
+                  onPressed: _pickReviewItem,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                ),
                 if (_selectedImageBytes != null)
                   TextButton.icon(
                     icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.redAccent),
