@@ -160,6 +160,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   }
 
   Future<void> _setUpEncryption() async {
+    final user = AuthService().currentUser;
+    if (user != null) {
+      await _runCryptoAction(() => ChatCrypto().createKeys(ChatCrypto.vaultKeyFor(user.id)));
+      return;
+    }
     final result = await showChatPasswordDialog(context, mode: ChatPasswordMode.create);
     if (result?.password == null || !mounted) return;
     await _runCryptoAction(() => ChatCrypto().createKeys(result!.password!));

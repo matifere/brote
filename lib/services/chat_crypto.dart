@@ -224,6 +224,8 @@ class ChatCrypto {
   static const int minPasswordLength = 6;
   static const Duration _missingKeyRetry = Duration(minutes: 1);
 
+  static String vaultKeyFor(String userId) => 'brote_e2e_vault_$userId';
+
   final ValueNotifier<ChatCryptoStatus> status = ValueNotifier(ChatCryptoStatus.checking);
 
   String? _userId;
@@ -264,14 +266,28 @@ class ChatCrypto {
       debugPrint('Chat key load notice: $e');
     }
 
+    final vaultKey = vaultKeyFor(user.id);
     final data = await _request('GET', '/api/keys/me');
     if (data == null) {
       status.value = ChatCryptoStatus.unavailable;
       return;
     }
     final bundle = data['keyBundle'];
-    _bundle = bundle is Map<String, dynamic> ? ChatKeyBundle.fromJson(bundle) : null;
-    status.value = _bundle == null ? ChatCryptoStatus.needsSetup : ChatCryptoStatus.locked;
+    if (bundle is Map<String, dynamic>) {
+      final parsed = ChatKeyBundle.fromJson(bundle);
+      _bundle = parsed;
+      // Transparently unwrap with deterministic account vault key
+      final keyPair = await ChatCipher.unwrapKeyPair(parsed, vaultKey);
+      if (keyPair != null) {
+        await _activate(keyPair, parsed);
+        return;
+      }
+      // Fallback for legacy custom passwords:
+      status.value = ChatCryptoStatus.locked;
+    } else {
+      // No keys yet on server: automatically create and upload new keys transparently
+      await createKeys(vaultKey);
+    }
   }
 
   /// Sets up or unlocks chat keys transparently using the user's account password.
@@ -293,6 +309,7 @@ class ChatCrypto {
       }
     }
 
+    final vaultKey = vaultKeyFor(user.id);
     // New device or first-time setup: check the server for existing keys
     final data = await _request('GET', '/api/keys/me');
     if (data == null) {
@@ -302,19 +319,18 @@ class ChatCrypto {
 
     final bundleJson = data['keyBundle'];
     if (bundleJson is Map<String, dynamic>) {
-      // User already has backed up keys on server: unwrap with account password
       final bundle = ChatKeyBundle.fromJson(bundleJson);
       _bundle = bundle;
-      final keyPair = await ChatCipher.unwrapKeyPair(bundle, password);
+      var keyPair = await ChatCipher.unwrapKeyPair(bundle, vaultKey);
+      keyPair ??= await ChatCipher.unwrapKeyPair(bundle, password);
       if (keyPair != null) {
         await _activate(keyPair, bundle);
         return;
       }
-      // If password did not unwrap (e.g. legacy custom password), keep as locked
       status.value = ChatCryptoStatus.locked;
     } else {
-      // No keys yet on server: create new keys protected by account password
-      await createKeys(password);
+      // No keys yet on server: automatically create with vaultKey
+      await createKeys(vaultKey);
     }
   }
 

@@ -211,4 +211,55 @@ void main() {
 
     await closeChat(tester);
   });
+
+  testWidgets('entering a chat automatically initializes encryption with zero prompts or passwords', (tester) async {
+    ChatKeyBundle? uploadedBundle;
+    final server = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/api/auth/me') {
+        return _json({'success': true, 'token': 'tok', 'user': _me, 'profile': _me});
+      }
+      if (path == '/api/chats/conv-1/messages') {
+        return _json({'success': true, 'messages': []});
+      }
+      if (path == '/api/keys/me') {
+        if (request.method == 'GET') {
+          return _json({'success': true, 'keyBundle': uploadedBundle?.toJson()});
+        }
+        if (request.method == 'PUT') {
+          uploadedBundle = ChatKeyBundle.fromJson(jsonDecode(request.body) as Map<String, dynamic>);
+          return _json({'success': true});
+        }
+      }
+      if (path == '/api/keys/other-1') {
+        final publicKey = await otherKeys.extractPublicKey();
+        return _json({'success': true, 'publicKey': base64Encode(publicKey.bytes)});
+      }
+      return http.Response('404 Not Found', 404);
+    });
+
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await http.runWithClient(() async {
+      await AuthService().tryAutoLogin();
+      await tester.pumpWidget(
+        const MaterialApp(home: ChatConversationScreen(conversationId: 'conv-1', otherParticipant: _other)),
+      );
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+      await tester.pumpAndSettle();
+    }, () => server);
+
+    // Completely automatic: encryption is active, bundle was created, zero password prompts
+    expect(uploadedBundle, isNotNull);
+    expect(find.textContaining('Cifrado de punta a punta'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(TextFormField), findsNothing);
+
+    await closeChat(tester);
+  });
 }
