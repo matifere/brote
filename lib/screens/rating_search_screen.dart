@@ -66,15 +66,54 @@ class RatingSearchScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
+
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      appBar: AppBar(title: Text(_CategoryCopy.of(category).title)),
+      backgroundColor: colorScheme.surface,
       body: SafeArea(
-        top: false,
         child: Center(
           child: Container(
             constraints: const BoxConstraints(maxWidth: 680),
-            child: RatingSearchView(category: category, autofocus: true),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
+                  )
+                : null,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 16, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back_rounded),
+                        tooltip: 'Volver',
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _CategoryCopy.of(category).title,
+                        style: textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: RatingSearchView(category: category, autofocus: true),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -198,6 +237,7 @@ class _RatingSearchViewState extends State<RatingSearchView> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 680),
       builder: (_) => _RatingSheet(
         item: item,
         subtitle: subtitle ?? item.detail,
@@ -607,11 +647,14 @@ class _RatingSheetState extends State<_RatingSheet> {
     final hasOpinion = _opinionController.text.trim().isNotEmpty;
 
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(24, 0, 24, 16 + MediaQuery.viewInsetsOf(context).bottom),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 16 + MediaQuery.viewInsetsOf(context).bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
             if (widget.imageUrl != null) ...[
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
@@ -703,6 +746,8 @@ class _RatingSheetState extends State<_RatingSheet> {
           ],
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }

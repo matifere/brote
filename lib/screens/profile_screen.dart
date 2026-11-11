@@ -200,11 +200,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final affinity = _isOwnProfile ? null : _tasteAffinity(parsedBio);
     final avatarUrl = _currentProfile.avatarUrl;
     final bannerUrl = _currentProfile.bannerUrl;
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: NestedScrollView(
-        headerSliverBuilder: (context, innerBoxIsScrolled) {
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 700),
+          decoration: isDesktop
+              ? BoxDecoration(
+                  color: colorScheme.surface,
+                  border: Border.symmetric(
+                    vertical: BorderSide(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  ),
+                )
+              : null,
+          child: NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) {
           return [
             SliverAppBar(
               pinned: false,
@@ -564,6 +579,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         body: _isContentLocked
             ? _buildPrivateAccountNotice(colorScheme, textTheme)
             : _buildPostsStream(colorScheme, textTheme),
+          ),
+        ),
       ),
     );
   }
@@ -587,6 +604,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 680),
       builder: (sheetContext) => SafeArea(
         child: ValueListenableBuilder<ThemeMode>(
           valueListenable: ThemeService().mode,

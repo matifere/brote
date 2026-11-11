@@ -114,87 +114,122 @@ class _ReviewItemPickerScreenState extends State<ReviewItemPickerScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     final isMovie = _category == RatingCategory.movie;
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        title: const Text('¿Qué querés reseñar?', style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: colorScheme.surface,
-        scrolledUnderElevation: 0,
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: SegmentedButton<RatingCategory>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(
-                    value: RatingCategory.movie,
-                    icon: Icon(Icons.movie_outlined, size: 18),
-                    label: Text('Película'),
-                  ),
-                  ButtonSegment(
-                    value: RatingCategory.music,
-                    icon: Icon(Icons.music_note_outlined, size: 18),
-                    label: Text('Música'),
-                  ),
-                ],
-                selected: {_category},
-                onSelectionChanged: (selection) => _setCategory(selection.first),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              autofocus: true,
-              textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                hintText: isMovie ? 'Buscar una película o serie...' : 'Buscar un tema, álbum o artista...',
-                prefixIcon: Icon(
-                  isMovie ? Icons.movie_outlined : Icons.music_note_outlined,
-                  color: colorScheme.primary,
-                ),
-                suffixIcon: _query.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 20),
-                        tooltip: 'Limpiar búsqueda',
-                        onPressed: _searchController.clear,
-                      )
-                    : null,
-                filled: true,
-                fillColor: colorScheme.surfaceContainerLow,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ),
-          if (!isMovie)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Wrap(
-                spacing: 8,
-                children: [
-                  for (final (label, kind) in _musicFilters)
-                    ChoiceChip(
-                      label: Text(label),
-                      selected: _musicKind == kind,
-                      showCheckmark: false,
-                      onSelected: (_) => _setMusicKind(kind),
+      body: SafeArea(
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 680),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
                     ),
-                ],
-              ),
+                  )
+                : null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 16, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        tooltip: 'Cerrar',
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '¿Qué querés reseñar?',
+                        style: textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<RatingCategory>(
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(
+                          value: RatingCategory.movie,
+                          icon: Icon(Icons.movie_outlined, size: 18),
+                          label: Text('Película'),
+                        ),
+                        ButtonSegment(
+                          value: RatingCategory.music,
+                          icon: Icon(Icons.music_note_outlined, size: 18),
+                          label: Text('Música'),
+                        ),
+                      ],
+                      selected: {_category},
+                      onSelectionChanged: (selection) => _setCategory(selection.first),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: TextField(
+                    controller: _searchController,
+                    autofocus: true,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText: isMovie ? 'Buscar una película o serie...' : 'Buscar un tema, álbum o artista...',
+                      prefixIcon: Icon(
+                        isMovie ? Icons.movie_outlined : Icons.music_note_outlined,
+                        color: colorScheme.primary,
+                      ),
+                      suffixIcon: _query.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.close_rounded, size: 20),
+                              tooltip: 'Limpiar búsqueda',
+                              onPressed: _searchController.clear,
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: colorScheme.surfaceContainerLow,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+                if (!isMovie)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final (label, kind) in _musicFilters)
+                          ChoiceChip(
+                            label: Text(label),
+                            selected: _musicKind == kind,
+                            showCheckmark: false,
+                            onSelected: (_) => _setMusicKind(kind),
+                          ),
+                      ],
+                    ),
+                  ),
+                Expanded(child: _buildBody(colorScheme)),
+              ],
             ),
-          Expanded(child: _buildBody(colorScheme)),
-        ],
+          ),
+        ),
       ),
     );
   }

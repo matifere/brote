@@ -254,6 +254,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     final displayName = current?.displayName ?? 'Usuario';
     final username = current?.username ?? 'usuario';
     final avatarUrl = current?.avatarUrl;
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
@@ -299,9 +300,23 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 680),
+          decoration: isDesktop
+              ? BoxDecoration(
+                  color: colorScheme.surface,
+                  border: Border.symmetric(
+                    vertical: BorderSide(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  ),
+                )
+              : null,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // User header
@@ -554,6 +569,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ],
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }
