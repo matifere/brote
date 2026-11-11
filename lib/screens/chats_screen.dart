@@ -340,9 +340,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                              )
-                            else if (chat.isRead)
-                              Icon(Icons.done_all_rounded, size: 15, color: colorScheme.primary),
+                              ),
                           ],
                         ),
                         onTap: () async {

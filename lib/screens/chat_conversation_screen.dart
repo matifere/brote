@@ -830,14 +830,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                                           fontSize: 10.5,
                                         ),
                                       ),
-                                      if (isMe) ...[
-                                        const SizedBox(width: 4),
-                                        Icon(
-                                          Icons.done_all_rounded,
-                                          size: 13,
-                                          color: colorScheme.onPrimary.withValues(alpha: 0.8),
-                                        ),
-                                      ],
                                     ],
                                   ),
                                 ],
