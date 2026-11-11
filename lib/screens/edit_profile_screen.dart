@@ -551,7 +551,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ],
       ),
       body: SingleChildScrollView(
-        child: Column(
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Cover Banner & Overlapping Avatar Preview
@@ -832,6 +835,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ],
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }

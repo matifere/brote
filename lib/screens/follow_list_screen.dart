@@ -115,12 +115,17 @@ class _FollowListScreenState extends State<FollowListScreen> with SingleTickerPr
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildList(FollowListType.followers, _followers, colorScheme, textTheme),
-          _buildList(FollowListType.following, _following, colorScheme, textTheme),
-        ],
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildList(FollowListType.followers, _followers, colorScheme, textTheme),
+              _buildList(FollowListType.following, _following, colorScheme, textTheme),
+            ],
+          ),
+        ),
       ),
     );
   }

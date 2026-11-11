@@ -69,7 +69,15 @@ class RatingSearchScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(title: Text(_CategoryCopy.of(category).title)),
-      body: SafeArea(top: false, child: RatingSearchView(category: category, autofocus: true)),
+      body: SafeArea(
+        top: false,
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: RatingSearchView(category: category, autofocus: true),
+          ),
+        ),
+      ),
     );
   }
 }

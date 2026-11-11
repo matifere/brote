@@ -73,25 +73,34 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isDesktop = MediaQuery.sizeOf(context).width >= 720;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
       appBar: AppBar(
         titleSpacing: 16,
-        title: Row(
-          children: [
-            const BroteLogo(size: 32, useDarkSquircle: true),
-            const SizedBox(width: 10),
-            Text(
-              'brote',
-              style: textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w900,
-                color: colorScheme.primary,
-                letterSpacing: -0.5,
+        title: isDesktop
+            ? Text(
+                'Inicio',
+                style: textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                ),
+              )
+            : Row(
+                children: [
+                  const BroteLogo(size: 32, useDarkSquircle: true),
+                  const SizedBox(width: 10),
+                  Text(
+                    'brote',
+                    style: textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: colorScheme.primary,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
         actions: [
           ValueListenableBuilder<UserProfile?>(
             valueListenable: AuthService().currentUserNotifier,
@@ -112,44 +121,45 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
               );
             },
           ),
-          ValueListenableBuilder<UserProfile?>(
-            valueListenable: AuthService().currentUserNotifier,
-            builder: (context, user, _) {
-              final activeProfile = user ?? widget.profile;
-              final avatarUrl = activeProfile.avatarUrl;
-              final displayName = activeProfile.displayName;
+          if (!isDesktop)
+            ValueListenableBuilder<UserProfile?>(
+              valueListenable: AuthService().currentUserNotifier,
+              builder: (context, user, _) {
+                final activeProfile = user ?? widget.profile;
+                final avatarUrl = activeProfile.avatarUrl;
+                final displayName = activeProfile.displayName;
 
-              return InkWell(
-                onTap: widget.onOpenProfile,
-                borderRadius: BorderRadius.circular(20),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: CircleAvatar(
-                    radius: 17,
-                    backgroundColor: colorScheme.primaryFixedDim,
-                    backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
-                        ? NetworkImage(avatarUrl)
-                        : null,
-                    onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
-                        ? (exception, stackTrace) {}
-                        : null,
-                    child: (avatarUrl == null || avatarUrl.isEmpty)
-                        ? Text(
-                            displayName.isNotEmpty
-                                ? displayName[0].toUpperCase()
-                                : '?',
-                            style: TextStyle(
-                              color: colorScheme.onPrimaryFixedVariant,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          )
-                        : null,
+                return InkWell(
+                  onTap: widget.onOpenProfile,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: CircleAvatar(
+                      radius: 17,
+                      backgroundColor: colorScheme.primaryFixedDim,
+                      backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                          ? NetworkImage(avatarUrl)
+                          : null,
+                      onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
+                          ? (exception, stackTrace) {}
+                          : null,
+                      child: (avatarUrl == null || avatarUrl.isEmpty)
+                          ? Text(
+                              displayName.isNotEmpty
+                                  ? displayName[0].toUpperCase()
+                                  : '?',
+                              style: TextStyle(
+                                color: colorScheme.onPrimaryFixedVariant,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            )
+                          : null,
+                    ),
                   ),
-                ),
-              );
-            },
-          ),
+                );
+              },
+            ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),

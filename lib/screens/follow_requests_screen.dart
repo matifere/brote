@@ -133,13 +133,16 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
       ),
-      body: RefreshIndicator(
-        onRefresh: _fetchRequests,
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _requests.isEmpty
-                ? _buildEmptyState(colorScheme, textTheme)
-                : ListView.separated(
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: RefreshIndicator(
+            onRefresh: _fetchRequests,
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _requests.isEmpty
+                    ? _buildEmptyState(colorScheme, textTheme)
+                    : ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     itemCount: _requests.length + 1,
                     separatorBuilder: (context, index) {
@@ -315,6 +318,8 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
                       );
                     },
                   ),
+          ),
+        ),
       ),
     );
   }

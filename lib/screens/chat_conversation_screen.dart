@@ -435,53 +435,65 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         ),
       ),
-      body: Column(
-        children: [
-          // Messages stream
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _messages.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.chat_bubble_outline_rounded,
-                                  size: 48, color: colorScheme.outline),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Iniciá la conversación',
-                                style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 720),
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            border: Border.symmetric(
+              vertical: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                width: 1,
+              ),
+            ),
+          ),
+          child: Column(
+            children: [
+              // Messages stream
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _messages.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.chat_bubble_outline_rounded,
+                                      size: 48, color: colorScheme.outline),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'Iniciá la conversación',
+                                    style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Enviá un mensaje para chatear con @$username.',
+                                    textAlign: TextAlign.center,
+                                    style: textTheme.bodyMedium?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 6),
-                              Text(
-                                'Enviá un mensaje para chatear con @$username.',
-                                textAlign: TextAlign.center,
-                                style: textTheme.bodyMedium?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = _messages[index];
-                          final isMe = msg.isMe;
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            itemCount: _messages.length,
+                            itemBuilder: (context, index) {
+                              final msg = _messages[index];
+                              final isMe = msg.isMe;
 
-                          return Align(
-                            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                            child: Container(
-                              margin: const EdgeInsets.only(bottom: 10),
-                              constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.76,
-                              ),
+                              return Align(
+                                alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  constraints: BoxConstraints(
+                                    maxWidth: (MediaQuery.of(context).size.width * 0.76).clamp(200.0, 480.0),
+                                  ),
                               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                               decoration: BoxDecoration(
                                 color: isMe
@@ -608,6 +620,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         ],
       ),
-    );
+    ),
+  ),
+);
   }
 }
