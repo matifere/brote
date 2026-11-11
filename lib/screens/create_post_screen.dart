@@ -320,47 +320,66 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        backgroundColor: colorScheme.surface,
-        scrolledUnderElevation: 0,
-        title: const Text(
-          'Nueva publicación',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-        ),
-        actions: [
-          // Preview Toggle button
-          if (_textController.text.trim().isNotEmpty)
-            TextButton.icon(
-              icon: Icon(
-                _showPreview ? Icons.edit_note_rounded : Icons.visibility_outlined,
-                size: 18,
-              ),
-              label: Text(_showPreview ? 'Editar' : 'Vista previa'),
-              onPressed: () {
-                setState(() => _showPreview = !_showPreview);
-              },
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: FilledButton(
-              onPressed: _isPublishing ? null : _handlePublish,
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              ),
-              child: _isPublishing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Text(
-                      'Publicar',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 680),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
                     ),
+                  )
+                : null,
+            child: AppBar(
+              backgroundColor: colorScheme.surface,
+              scrolledUnderElevation: 0,
+              title: const Text(
+                'Nueva publicación',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+              actions: [
+                // Preview Toggle button
+                if (_textController.text.trim().isNotEmpty)
+                  TextButton.icon(
+                    icon: Icon(
+                      _showPreview ? Icons.edit_note_rounded : Icons.visibility_outlined,
+                      size: 18,
+                    ),
+                    label: Text(_showPreview ? 'Editar' : 'Vista previa'),
+                    onPressed: () {
+                      setState(() => _showPreview = !_showPreview);
+                    },
+                  ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: FilledButton(
+                    onPressed: _isPublishing ? null : _handlePublish,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                    child: _isPublishing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text(
+                            'Publicar',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
       body: Center(
         child: Container(

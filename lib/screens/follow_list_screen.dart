@@ -83,41 +83,73 @@ class _FollowListScreenState extends State<FollowListScreen> with SingleTickerPr
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
+
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        backgroundColor: colorScheme.surface,
-        scrolledUnderElevation: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.profile.displayName,
-              style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-              overflow: TextOverflow.ellipsis,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight + kTextTabBarHeight),
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 680),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
+                  )
+                : null,
+            child: AppBar(
+              backgroundColor: colorScheme.surface,
+              scrolledUnderElevation: 0,
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.profile.displayName,
+                    style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    '@${widget.profile.username}',
+                    style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+              bottom: TabBar(
+                controller: _tabController,
+                indicatorColor: colorScheme.primary,
+                indicatorWeight: 3,
+                labelColor: colorScheme.primary,
+                unselectedLabelColor: colorScheme.onSurfaceVariant,
+                labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                tabs: [
+                  Tab(text: _tabLabel('Seguidores', _followers, widget.profile.followersCount)),
+                  Tab(text: _tabLabel('Siguiendo', _following, widget.profile.followingCount)),
+                ],
+              ),
             ),
-            Text(
-              '@${widget.profile.username}',
-              style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: colorScheme.primary,
-          indicatorWeight: 3,
-          labelColor: colorScheme.primary,
-          unselectedLabelColor: colorScheme.onSurfaceVariant,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-          tabs: [
-            Tab(text: _tabLabel('Seguidores', _followers, widget.profile.followersCount)),
-            Tab(text: _tabLabel('Siguiendo', _following, widget.profile.followingCount)),
-          ],
+          ),
         ),
       ),
       body: Center(
         child: Container(
           constraints: const BoxConstraints(maxWidth: 680),
+          decoration: isDesktop
+              ? BoxDecoration(
+                  color: colorScheme.surface,
+                  border: Border.symmetric(
+                    vertical: BorderSide(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  ),
+                )
+              : null,
           child: TabBarView(
             controller: _tabController,
             children: [

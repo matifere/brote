@@ -58,25 +58,66 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(title: const Text('Notificaciones')),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  if (!_fromServer) _buildLocalModeNotice(colorScheme, textTheme),
-                  if (_items.isEmpty)
-                    _buildEmptyState(colorScheme, textTheme)
-                  else
-                    ..._items.map((n) => _buildTile(n, colorScheme, textTheme)),
-                ],
-              ),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 700),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
+                  )
+                : null,
+            child: AppBar(
+              title: const Text('Notificaciones'),
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              backgroundColor: colorScheme.surface,
             ),
+          ),
+        ),
+      ),
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 700),
+          decoration: isDesktop
+              ? BoxDecoration(
+                  color: colorScheme.surface,
+                  border: Border.symmetric(
+                    vertical: BorderSide(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  ),
+                )
+              : null,
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      if (!_fromServer) _buildLocalModeNotice(colorScheme, textTheme),
+                      if (_items.isEmpty)
+                        _buildEmptyState(colorScheme, textTheme)
+                      else
+                        ..._items.map((n) => _buildTile(n, colorScheme, textTheme)),
+                    ],
+                  ),
+                ),
+        ),
+      ),
     );
   }
 

@@ -123,19 +123,51 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
+
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        backgroundColor: colorScheme.surface,
-        scrolledUnderElevation: 0,
-        title: const Text(
-          'Solicitudes de seguimiento',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 680),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
+                  )
+                : null,
+            child: AppBar(
+              backgroundColor: colorScheme.surface,
+              scrolledUnderElevation: 0,
+              title: const Text(
+                'Solicitudes de seguimiento',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ),
         ),
       ),
       body: Center(
         child: Container(
           constraints: const BoxConstraints(maxWidth: 680),
+          decoration: isDesktop
+              ? BoxDecoration(
+                  color: colorScheme.surface,
+                  border: Border.symmetric(
+                    vertical: BorderSide(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  ),
+                )
+              : null,
           child: RefreshIndicator(
             onRefresh: _fetchRequests,
             child: _isLoading

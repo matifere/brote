@@ -612,75 +612,95 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     final username = _otherParticipant.username;
     final avatarUrl = _otherParticipant.avatarUrl;
     final isPrivate = _otherParticipant.isPrivate;
+    final isDesktop = MediaQuery.sizeOf(context).width > 720;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        titleSpacing: 0,
-        backgroundColor: colorScheme.surface,
-        scrolledUnderElevation: 0,
-        title: InkWell(
-          onTap: _openParticipantProfile,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 19,
-                  backgroundColor: colorScheme.primaryContainer,
-                  backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
-                      ? NetworkImage(avatarUrl)
-                      : null,
-                  onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
-                      ? (exception, stackTrace) {}
-                      : null,
-                  child: (avatarUrl == null || avatarUrl.isEmpty)
-                      ? Text(
-                          displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                          style: TextStyle(
-                            color: colorScheme.onPrimaryContainer,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              displayName,
-                              style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (_otherParticipant.isVerified) ...[
-                            const SizedBox(width: 4),
-                            Icon(Icons.verified_rounded, size: 14, color: colorScheme.primary),
-                          ],
-                          if (isPrivate) ...[
-                            const SizedBox(width: 4),
-                            Icon(Icons.lock_rounded, size: 12, color: colorScheme.onSurfaceVariant),
-                          ],
-                        ],
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 720),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
                       ),
-                      Text(
-                        '@$username',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 11,
+                    ),
+                  )
+                : null,
+            child: AppBar(
+              titleSpacing: 0,
+              backgroundColor: colorScheme.surface,
+              scrolledUnderElevation: 0,
+              title: InkWell(
+                onTap: _openParticipantProfile,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 19,
+                        backgroundColor: colorScheme.primaryContainer,
+                        backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                            ? NetworkImage(avatarUrl)
+                            : null,
+                        onBackgroundImageError: (avatarUrl != null && avatarUrl.isNotEmpty)
+                            ? (exception, stackTrace) {}
+                            : null,
+                        child: (avatarUrl == null || avatarUrl.isEmpty)
+                            ? Text(
+                                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                                style: TextStyle(
+                                  color: colorScheme.onPrimaryContainer,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    displayName,
+                                    style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (_otherParticipant.isVerified) ...[
+                                  const SizedBox(width: 4),
+                                  Icon(Icons.verified_rounded, size: 14, color: colorScheme.primary),
+                                ],
+                                if (isPrivate) ...[
+                                  const SizedBox(width: 4),
+                                  Icon(Icons.lock_rounded, size: 12, color: colorScheme.onSurfaceVariant),
+                                ],
+                              ],
+                            ),
+                            Text(
+                              '@$username',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ),

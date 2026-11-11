@@ -114,46 +114,87 @@ class _PostCommentsScreenState extends State<PostCommentsScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isDesktop = MediaQuery.sizeOf(context).width > 700;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(title: const Text('Comentarios')),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              controller: _scrollController,
-              children: [
-                PostCard(post: widget.post, showCommentsButton: false),
-                Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
-                if (_isLoading)
-                  const Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(child: CircularProgressIndicator()),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 700),
+            decoration: isDesktop
+                ? BoxDecoration(
+                    color: colorScheme.surface,
+                    border: Border.symmetric(
+                      vertical: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
                   )
-                else if (_isUnavailable)
-                  _buildMessage(
-                    Icons.cloud_off_rounded,
-                    'Los comentarios todavía no están disponibles',
-                    'Se activan cuando se actualice el servidor.',
-                    colorScheme,
-                    textTheme,
-                  )
-                else if (_comments.isEmpty)
-                  _buildMessage(
-                    Icons.chat_bubble_outline_rounded,
-                    'Todavía no hay comentarios',
-                    'Sé la primera persona en comentar.',
-                    colorScheme,
-                    textTheme,
-                  )
-                else
-                  ..._comments.map((c) => _buildComment(c, colorScheme, textTheme)),
-              ],
+                : null,
+            child: AppBar(
+              title: const Text('Comentarios'),
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              backgroundColor: colorScheme.surface,
             ),
           ),
-          _buildInput(colorScheme),
-        ],
+        ),
+      ),
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 700),
+          decoration: isDesktop
+              ? BoxDecoration(
+                  color: colorScheme.surface,
+                  border: Border.symmetric(
+                    vertical: BorderSide(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                  ),
+                )
+              : null,
+          child: Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  controller: _scrollController,
+                  children: [
+                    PostCard(post: widget.post, showCommentsButton: false),
+                    Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                    if (_isLoading)
+                      const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else if (_isUnavailable)
+                      _buildMessage(
+                        Icons.cloud_off_rounded,
+                        'Los comentarios todavía no están disponibles',
+                        'Se activan cuando se actualice el servidor.',
+                        colorScheme,
+                        textTheme,
+                      )
+                    else if (_comments.isEmpty)
+                      _buildMessage(
+                        Icons.chat_bubble_outline_rounded,
+                        'Todavía no hay comentarios',
+                        'Sé la primera persona en comentar.',
+                        colorScheme,
+                        textTheme,
+                      )
+                    else
+                      ..._comments.map((c) => _buildComment(c, colorScheme, textTheme)),
+                  ],
+                ),
+              ),
+              _buildInput(colorScheme),
+            ],
+          ),
+        ),
       ),
     );
   }
