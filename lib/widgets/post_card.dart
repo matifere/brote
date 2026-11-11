@@ -6,6 +6,8 @@ import '../models/rating.dart';
 import '../models/user_profile.dart';
 import '../screens/profile_screen.dart';
 import '../services/auth_service.dart';
+import '../services/catalog_service.dart';
+import 'full_screen_image_viewer.dart';
 import 'rating_stars.dart';
 
 class PostCard extends StatefulWidget {
@@ -26,12 +28,14 @@ class _PostCardState extends State<PostCard> {
   late bool _isLiked;
   late int _likesCount;
   bool _isLikeLoading = false;
+  String? _moviePosterUrl;
 
   @override
   void initState() {
     super.initState();
     _isLiked = widget.post.isLiked;
     _likesCount = widget.post.likesCount;
+    _loadPosterIfNeeded();
   }
 
   @override
@@ -42,6 +46,27 @@ class _PostCardState extends State<PostCard> {
     if (!identical(oldWidget.post, widget.post) && !_isLikeLoading) {
       _isLiked = widget.post.isLiked;
       _likesCount = widget.post.likesCount;
+      _loadPosterIfNeeded();
+    }
+  }
+
+  void _loadPosterIfNeeded() {
+    final parsed = widget.post.parsedContent;
+    if (parsed.review != null && parsed.review!.category == RatingCategory.movie) {
+      if (widget.post.imageUrl != null && widget.post.imageUrl!.isNotEmpty) {
+        _moviePosterUrl = widget.post.imageUrl;
+      } else {
+        final cached = CatalogService().getCachedPoster(parsed.review!.title, year: parsed.review!.year);
+        if (cached != null) {
+          _moviePosterUrl = cached;
+        } else {
+          CatalogService().getMoviePoster(parsed.review!.title, year: parsed.review!.year).then((url) {
+            if (mounted && url != null) {
+              setState(() => _moviePosterUrl = url);
+            }
+          });
+        }
+      }
     }
   }
 
@@ -110,6 +135,10 @@ class _PostCardState extends State<PostCard> {
     final authorAvatar = widget.post.authorAvatarUrl;
     final parsed = widget.post.parsedContent;
     final timeLeft = widget.post.timeLeft;
+    final isCoverImage = parsed.review != null &&
+        parsed.review!.category == RatingCategory.movie &&
+        widget.post.imageUrl != null &&
+        widget.post.imageUrl == (_moviePosterUrl ?? widget.post.imageUrl);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -236,36 +265,46 @@ class _PostCardState extends State<PostCard> {
                     ),
                   ),
 
-                // Post Image Attachment
-                if (widget.post.imageUrl != null && widget.post.imageUrl!.isNotEmpty) ...[
+                // Post Image Attachment (skip if already displayed as movie poster in review)
+                if (!isCoverImage && widget.post.imageUrl != null && widget.post.imageUrl!.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      constraints: const BoxConstraints(maxHeight: 380),
-                      width: double.infinity,
-                      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                      child: Image.network(
-                        widget.post.imageUrl!,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Container(
-                            height: 200,
-                            alignment: Alignment.center,
-                            child: CircularProgressIndicator(
-                              value: loadingProgress.expectedTotalBytes != null
-                                  ? loadingProgress.cumulativeBytesLoaded /
-                                      loadingProgress.expectedTotalBytes!
-                                  : null,
-                              strokeWidth: 2,
+                  GestureDetector(
+                    onTap: () => openFullScreenImage(
+                      context,
+                      imageUrl: widget.post.imageUrl!,
+                      heroTag: 'post-image-${widget.post.id}',
+                    ),
+                    child: Hero(
+                      tag: 'post-image-${widget.post.id}',
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          constraints: const BoxConstraints(maxHeight: 380),
+                          width: double.infinity,
+                          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                          child: Image.network(
+                            widget.post.imageUrl!,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Container(
+                                height: 200,
+                                alignment: Alignment.center,
+                                child: CircularProgressIndicator(
+                                  value: loadingProgress.expectedTotalBytes != null
+                                      ? loadingProgress.cumulativeBytesLoaded /
+                                          loadingProgress.expectedTotalBytes!
+                                      : null,
+                                  strokeWidth: 2,
+                                ),
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              height: 120,
+                              alignment: Alignment.center,
+                              child: Icon(Icons.broken_image_rounded, color: colorScheme.outline),
                             ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          height: 120,
-                          alignment: Alignment.center,
-                          child: Icon(Icons.broken_image_rounded, color: colorScheme.outline),
+                          ),
                         ),
                       ),
                     ),
@@ -394,6 +433,47 @@ class _PostCardState extends State<PostCard> {
 
   Widget _buildReview(RatedItem review, ColorScheme colorScheme, TextTheme textTheme) {
     final isMovie = review.category == RatingCategory.movie;
+    final posterUrl = isMovie ? (_moviePosterUrl ?? widget.post.imageUrl) : null;
+    final hasPoster = posterUrl != null && posterUrl.isNotEmpty;
+    final heroTag = 'review-poster-${widget.post.id}';
+
+    Widget posterBox = Container(
+      width: hasPoster ? 48 : 40,
+      height: hasPoster ? 70 : 40,
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(hasPoster ? 8 : 10),
+      ),
+      child: Icon(
+        isMovie ? Icons.movie_outlined : Icons.music_note_outlined,
+        color: colorScheme.primary,
+      ),
+    );
+
+    if (hasPoster) {
+      posterBox = Hero(
+        tag: heroTag,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            posterUrl,
+            width: 48,
+            height: 70,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => Container(
+              width: 48,
+              height: 70,
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.movie_outlined, color: colorScheme.primary),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 8),
@@ -404,19 +484,21 @@ class _PostCardState extends State<PostCard> {
         border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.6)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: colorScheme.primaryContainer.withValues(alpha: 0.35),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              isMovie ? Icons.movie_outlined : Icons.music_note_outlined,
-              color: colorScheme.primary,
-            ),
-          ),
+          if (hasPoster)
+            GestureDetector(
+              onTap: () => openFullScreenImage(
+                context,
+                imageUrl: posterUrl,
+                heroTag: heroTag,
+                title: review.title,
+                subtitle: review.detail,
+              ),
+              child: posterBox,
+            )
+          else
+            posterBox,
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -426,24 +508,27 @@ class _PostCardState extends State<PostCard> {
                   isMovie ? 'Reseña de película' : 'Reseña de música',
                   style: textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
                 ),
+                const SizedBox(height: 2),
                 Text(
                   review.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
                 ),
-                if (review.detail != null)
+                if (review.detail != null) ...[
+                  const SizedBox(height: 1),
                   Text(
                     review.detail!,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
                   ),
+                ],
+                const SizedBox(height: 4),
+                RatingStars(stars: review.stars, size: 15),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          RatingStars(stars: review.stars, size: 16),
         ],
       ),
     );

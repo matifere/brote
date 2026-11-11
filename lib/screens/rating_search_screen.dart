@@ -110,6 +110,20 @@ class _RatingSearchViewState extends State<RatingSearchView> {
     _bio = ProfileBio.parse(AuthService().currentUser?.bio);
     AuthService().currentUserNotifier.addListener(_onProfileChanged);
     _searchController.addListener(_onSearchChanged);
+    _preloadRatingPosters();
+  }
+
+  void _preloadRatingPosters() {
+    for (final r in _bio.of(widget.category)) {
+      if (r.category == RatingCategory.movie &&
+          CatalogService().getCachedPoster(r.title, year: r.year) == null) {
+        CatalogService().getMoviePoster(r.title, year: r.year).then((url) {
+          if (mounted && url != null) {
+            setState(() {});
+          }
+        });
+      }
+    }
   }
 
   @override
@@ -124,6 +138,7 @@ class _RatingSearchViewState extends State<RatingSearchView> {
   void _onProfileChanged() {
     if (mounted) {
       setState(() => _bio = ProfileBio.parse(AuthService().currentUser?.bio));
+      _preloadRatingPosters();
     }
   }
 
@@ -183,10 +198,10 @@ class _RatingSearchViewState extends State<RatingSearchView> {
       ),
     );
     if (result == null || !mounted) return;
-    await _save(item, result);
+    await _save(item, result, imageUrl: imageUrl);
   }
 
-  Future<void> _save(RatedItem item, _RatingResult result) async {
+  Future<void> _save(RatedItem item, _RatingResult result, {String? imageUrl}) async {
     setState(() => _isSaving = true);
 
     if (result.stars == 0) {
@@ -207,6 +222,7 @@ class _RatingSearchViewState extends State<RatingSearchView> {
     if (result.opinion.isNotEmpty) {
       final post = await AuthService().createPost(
         content: PostContent(review: rating, body: result.opinion).compose(),
+        imageUrl: imageUrl,
       );
       posted = post != null;
     }
@@ -453,8 +469,11 @@ class _RatingSearchViewState extends State<RatingSearchView> {
             ),
           );
         }
+        final ratingItem = ratings[index - 1];
+        final cachedPoster = CatalogService().getCachedPoster(ratingItem.title, year: ratingItem.year);
         return _buildTile(
-          item: ratings[index - 1],
+          item: ratingItem,
+          imageUrl: cachedPoster,
           colorScheme: colorScheme,
           textTheme: textTheme,
         );
@@ -471,12 +490,13 @@ class _RatingSearchViewState extends State<RatingSearchView> {
   }) {
     final rating = _bio.find(item);
     final details = subtitle ?? item.detail;
+    final isMovie = widget.category == RatingCategory.movie;
     final iconBox = Container(
       width: 44,
-      height: 44,
+      height: isMovie ? 62 : 44,
       decoration: BoxDecoration(
         color: colorScheme.primaryContainer.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(isMovie ? 8 : 12),
       ),
       child: Icon(_copy.icon, color: colorScheme.primary),
     );
@@ -493,11 +513,11 @@ class _RatingSearchViewState extends State<RatingSearchView> {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         leading: imageUrl != null
             ? ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(isMovie ? 8 : 12),
                 child: Image.network(
                   imageUrl,
                   width: 44,
-                  height: 44,
+                  height: isMovie ? 62 : 44,
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) => iconBox,
                 ),
@@ -586,11 +606,11 @@ class _RatingSheetState extends State<_RatingSheet> {
           children: [
             if (widget.imageUrl != null) ...[
               ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 child: Image.network(
                   widget.imageUrl!,
-                  width: 96,
-                  height: 96,
+                  width: 80,
+                  height: 116,
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) => const SizedBox.shrink(),
                 ),

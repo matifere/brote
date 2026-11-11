@@ -302,6 +302,35 @@ void main() {
       expect(find.textContaining('★', findRichText: true), findsNothing);
     });
 
+    testWidgets('PostCard renders movie review and loads poster', (WidgetTester tester) async {
+      useView(tester, const Size(360, 780));
+
+      final post = PostItem(
+        id: 'review-movie-1',
+        authorId: 'author-1',
+        authorName: 'Matias',
+        authorUsername: 'mati',
+        imageUrl: 'https://commons.wikimedia.org/wiki/Special:FilePath/Inception_poster.jpg',
+        content: '🎬 Inception (2010) ★★★★★\n\nIncreíble película de Nolan.',
+        createdAt: DateTime.now().subtract(const Duration(hours: 1)),
+      );
+
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: PostCard(post: post))));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reseña de película'), findsOneWidget);
+      expect(find.text('Inception'), findsOneWidget);
+      expect(find.text('2010'), findsOneWidget);
+      expect(find.textContaining('Increíble película de Nolan.', findRichText: true), findsOneWidget);
+      // Hero tag for the poster in review
+      expect(find.byType(Hero), findsOneWidget);
+    });
+
+    test('CatalogService caches poster correctly', () {
+      final service = CatalogService();
+      expect(service.getCachedPoster('Test Movie', year: 2020), isNull);
+    });
+
     testWidgets('CreatePostScreen lets you pick a 24-hour duration', (WidgetTester tester) async {
       useView(tester, const Size(360, 780));
 

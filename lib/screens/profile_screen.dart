@@ -3,6 +3,7 @@ import '../models/rating.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/catalog_service.dart';
 import '../widgets/brote_logo.dart';
 import '../widgets/rating_stars.dart';
 import '../widgets/post_card.dart';
@@ -91,6 +92,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _currentProfile = isMe ? (AuthService().currentUser ?? widget.profile) : widget.profile;
     AuthService().postsRefreshNotifier.addListener(_fetchUserPosts);
     _fetchUserPosts();
+    _preloadRatingPosters();
 
     if (isMe) {
       AuthService().currentUserNotifier.addListener(_onProfileChanged);
@@ -99,8 +101,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
       AuthService().fetchUserProfile(widget.profile.username).then((fresh) {
         if (fresh != null && mounted) {
           setState(() => _currentProfile = fresh);
+          _preloadRatingPosters();
         }
       });
+    }
+  }
+
+  void _preloadRatingPosters() {
+    final bio = ProfileBio.parse(_currentProfile.bio);
+    for (final r in bio.of(RatingCategory.movie)) {
+      if (CatalogService().getCachedPoster(r.title, year: r.year) == null) {
+        CatalogService().getMoviePoster(r.title, year: r.year).then((url) {
+          if (mounted && url != null) {
+            setState(() {});
+          }
+        });
+      }
     }
   }
 
@@ -116,6 +132,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _currentProfile = AuthService().currentUser!;
       });
+      _preloadRatingPosters();
     }
   }
 
@@ -129,6 +146,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _currentProfile = updated;
       });
+      _preloadRatingPosters();
     }
   }
 
@@ -503,6 +521,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => RatingSearchScreen(category: category)),
     );
+    if (!mounted) return;
+    final updated = AuthService().currentUser;
+    if (updated != null && updated.id == _currentProfile.id) {
+      setState(() => _currentProfile = updated);
+      _preloadRatingPosters();
+    }
   }
 
   Widget _buildRatingsSection(RatingCategory category, List<RatedItem> ratings, ColorScheme colorScheme, TextTheme textTheme) {
@@ -561,35 +585,60 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildRatingChip(RatedItem rating, ColorScheme colorScheme, TextTheme textTheme) {
     final detail = rating.detail;
+    final isMovie = rating.category == RatingCategory.movie;
+    final posterUrl = isMovie
+        ? CatalogService().getCachedPoster(rating.title, year: rating.year)
+        : null;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(horizontal: isMovie && posterUrl != null ? 8 : 10, vertical: 6),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.6)),
       ),
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: rating.title,
-              style: textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: colorScheme.onSurface,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (posterUrl != null) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.network(
+                posterUrl,
+                width: 20,
+                height: 28,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
             ),
-            if (detail != null)
-              TextSpan(
-                text: rating.category == RatingCategory.movie ? ' $detail' : ' · $detail',
-                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-              ),
-            const WidgetSpan(child: SizedBox(width: 6)),
-            WidgetSpan(
-              alignment: PlaceholderAlignment.middle,
-              child: RatingStars(stars: rating.stars, size: 13),
-            ),
+            const SizedBox(width: 8),
           ],
-        ),
+          Flexible(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: rating.title,
+                    style: textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  if (detail != null)
+                    TextSpan(
+                      text: isMovie ? ' $detail' : ' · $detail',
+                      style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                    ),
+                  const WidgetSpan(child: SizedBox(width: 6)),
+                  WidgetSpan(
+                    alignment: PlaceholderAlignment.middle,
+                    child: RatingStars(stars: rating.stars, size: 13),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
