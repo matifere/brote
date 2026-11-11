@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/rating.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/catalog_service.dart';
+import '../services/theme_service.dart';
 import '../widgets/brote_logo.dart';
 import '../widgets/full_screen_image_viewer.dart';
 import '../widgets/rating_stars.dart';
 import '../widgets/post_card.dart';
+import '../widgets/taste_affinity.dart';
 import 'auth_screen.dart';
 import 'chat_conversation_screen.dart';
 import 'edit_profile_screen.dart';
@@ -193,9 +196,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final displayName = _currentProfile.displayName;
     final username = _currentProfile.username;
     final parsedBio = ProfileBio.parse(_currentProfile.bio);
-    final bio = _currentProfile.bio == null
-        ? 'Creador de contenido & fotografía. Apasionado por la tecnología, la música y el diseño. Conectando todos los días.'
-        : parsedBio.text;
+    final bio = parsedBio.text.trim();
+    final affinity = _isOwnProfile ? null : _tasteAffinity(parsedBio);
     final avatarUrl = _currentProfile.avatarUrl;
     final bannerUrl = _currentProfile.bannerUrl;
 
@@ -220,11 +222,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 children: [
                   const BroteLogo(size: 28, useDarkSquircle: true),
                   const SizedBox(width: 8),
-                  Text(
-                    'brote',
-                    style: textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: colorScheme.onSurface,
+                  // Own profile can have up to five actions; let the name give way on narrow phones
+                  Flexible(
+                    child: Text(
+                      'brote',
+                      overflow: TextOverflow.clip,
+                      softWrap: false,
+                      style: textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
                     ),
                   ),
                 ],
@@ -233,11 +240,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 IconButton(
                   tooltip: 'Compartir perfil',
                   icon: const Icon(Icons.share_outlined),
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Enlace copiado: brote.app/@$username')),
-                    );
-                  },
+                  onPressed: () => _shareProfile(displayName, username),
                 ),
                 if (_isOwnProfile && (_currentProfile.isPrivate || _currentProfile.pendingRequestsCount > 0))
                   IconButton(
@@ -253,6 +256,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       );
                       AuthService().fetchMyProfile();
                     },
+                  ),
+                if (_isOwnProfile)
+                  IconButton(
+                    tooltip: 'Apariencia',
+                    icon: ValueListenableBuilder<ThemeMode>(
+                      valueListenable: ThemeService().mode,
+                      builder: (context, mode, _) => Icon(switch (mode) {
+                        ThemeMode.light => Icons.light_mode_outlined,
+                        ThemeMode.dark => Icons.dark_mode_outlined,
+                        ThemeMode.system => Icons.brightness_auto_outlined,
+                      }),
+                    ),
+                    onPressed: _showAppearanceSheet,
                   ),
                 if (_isOwnProfile)
                   IconButton(
@@ -450,8 +466,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   child: Icon(Icons.lock_rounded, size: 14, color: colorScheme.onSurfaceVariant),
                                 ),
                               )
-                            else
-                              Icon(Icons.verified, size: 20, color: colorScheme.primary),
+                            else if (_currentProfile.isVerified)
+                              Tooltip(
+                                message: 'Cuenta verificada',
+                                child: Icon(Icons.verified, size: 20, color: colorScheme.primary),
+                              ),
                           ],
                         ),
                         const SizedBox(height: 2),
@@ -471,6 +490,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
+                    ] else if (_isOwnProfile) ...[
+                      InkWell(
+                        onTap: _openEditProfile,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.edit_note_rounded, size: 18, color: colorScheme.primary),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  'Agregá una descripción',
+                                  style: textTheme.bodyMedium?.copyWith(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                     ],
 
                     // Rated movies and music (stored in the bio)
@@ -480,14 +524,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 16),
                       ],
 
-                    // Metrics Row (Publicaciones, Seguidores, Siguiendo)
-                    Row(
+                    if (affinity != null) ...[
+                      TasteAffinityCard(affinity: affinity, otherUsername: username),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Metrics (Publicaciones, Seguidores, Siguiendo); wraps on narrow phones
+                    Wrap(
+                      spacing: 20,
+                      runSpacing: 4,
                       children: [
                         _buildMetric('${_userPosts.length}', 'Publicaciones', textTheme, colorScheme),
-                        const SizedBox(width: 20),
                         _buildMetric('${_currentProfile.followersCount}', 'Seguidores', textTheme, colorScheme,
                             onTap: _isContentLocked ? null : () => _openFollowList(0)),
-                        const SizedBox(width: 20),
                         _buildMetric('${_currentProfile.followingCount}', 'Siguiendo', textTheme, colorScheme,
                             onTap: _isContentLocked ? null : () => _openFollowList(1)),
                       ],
@@ -519,6 +568,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// Ratings both you and this profile have in their bios.
+  TasteAffinity? _tasteAffinity(ProfileBio theirs) {
+    final me = AuthService().currentUser;
+    if (me == null) return null;
+    return TasteAffinity.compare(ProfileBio.parse(me.bio), theirs);
+  }
+
+  void _shareProfile(String displayName, String username) {
+    // brote has no public web address yet, so share the username to search for
+    Clipboard.setData(ClipboardData(text: 'Seguí a $displayName (@$username) en brote'));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Copiaste @$username: pegalo donde quieras compartirlo')),
+    );
+  }
+
+  Future<void> _showAppearanceSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ValueListenableBuilder<ThemeMode>(
+          valueListenable: ThemeService().mode,
+          builder: (context, mode, _) => RadioGroup<ThemeMode>(
+            groupValue: mode,
+            onChanged: (value) {
+              if (value != null) ThemeService().setMode(value);
+              Navigator.of(sheetContext).pop();
+            },
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(24, 0, 24, 8),
+                  child: Text('Apariencia', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                ),
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.system,
+                  secondary: Icon(Icons.brightness_auto_outlined),
+                  title: Text('Igual que el dispositivo'),
+                ),
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.light,
+                  secondary: Icon(Icons.light_mode_outlined),
+                  title: Text('Claro'),
+                ),
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.dark,
+                  secondary: Icon(Icons.dark_mode_outlined),
+                  title: Text('Oscuro'),
+                ),
+                SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openRatingSearch(RatingCategory category) async {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => RatingSearchScreen(category: category)),
@@ -543,11 +652,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Icon(isMovie ? Icons.local_movies_outlined : Icons.library_music_outlined, size: 18, color: colorScheme.primary),
             const SizedBox(width: 6),
-            Text(
-              isMovie ? 'Películas' : 'Música',
-              style: textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: colorScheme.onSurface,
+            Flexible(
+              child: Text(
+                isMovie ? 'Películas' : 'Música',
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                ),
               ),
             ),
             if (ratings.isNotEmpty) ...[
@@ -838,6 +950,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     VoidCallback? onTap,
   }) {
     final content = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           number,

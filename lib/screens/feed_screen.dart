@@ -3,8 +3,8 @@ import '../models/post_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../widgets/brote_logo.dart';
+import '../widgets/notification_bell.dart';
 import '../widgets/post_card.dart';
-import 'follow_requests_screen.dart';
 
 class FeedScreen extends StatefulWidget {
   final UserProfile profile;
@@ -24,13 +24,15 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
   late TabController _tabController;
   List<PostItem> _forYouPosts = [];
   List<PostItem> _followingPosts = [];
+  List<PostItem> _reviewPosts = [];
   bool _isLoadingForYou = true;
   bool _isLoadingFollowing = true;
+  bool _isLoadingReviews = true;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     AuthService().postsRefreshNotifier.addListener(_loadPosts);
     _loadPosts();
   }
@@ -46,7 +48,29 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
     await Future.wait([
       _loadForYou(),
       _loadFollowing(),
+      _loadReviews(),
     ]);
+  }
+
+  Future<void> _loadReviews() async {
+    final posts = await AuthService().getFeedPosts(filter: 'reviews');
+    if (mounted) {
+      setState(() {
+        // Servers without the reviews filter return the whole feed
+        _reviewPosts = posts.where((p) => p.parsedContent.review != null).toList();
+        _isLoadingReviews = false;
+      });
+    }
+  }
+
+  /// Reviews from every tab, newest first.
+  List<PostItem> get _allReviews {
+    final byId = <String, PostItem>{};
+    for (final post in [..._reviewPosts, ..._forYouPosts, ..._followingPosts]) {
+      if (post.parsedContent.review != null) byId.putIfAbsent(post.id, () => post);
+    }
+    final oldest = DateTime.fromMillisecondsSinceEpoch(0);
+    return byId.values.toList()..sort((a, b) => (b.createdAt ?? oldest).compareTo(a.createdAt ?? oldest));
   }
 
   Future<void> _loadForYou() async {
@@ -102,25 +126,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
                 ],
               ),
         actions: [
-          ValueListenableBuilder<UserProfile?>(
-            valueListenable: AuthService().currentUserNotifier,
-            builder: (context, user, _) {
-              final pending = user?.pendingRequestsCount ?? 0;
-              return IconButton(
-                tooltip: 'Notificaciones y solicitudes',
-                icon: Badge(
-                  isLabelVisible: pending > 0,
-                  label: Text('$pending'),
-                  child: Icon(Icons.notifications_outlined, color: colorScheme.onSurfaceVariant),
-                ),
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const FollowRequestsScreen()),
-                  );
-                },
-              );
-            },
-          ),
+          const NotificationBell(),
           if (!isDesktop)
             ValueListenableBuilder<UserProfile?>(
               valueListenable: AuthService().currentUserNotifier,
@@ -177,6 +183,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
               tabs: const [
                 Tab(text: 'Para ti'),
                 Tab(text: 'Siguiendo'),
+                Tab(text: 'Reseñas'),
               ],
             ),
           ),
@@ -187,6 +194,7 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
         children: [
           _buildPostsList(colorScheme, textTheme),
           _buildFollowingPostsList(colorScheme, textTheme),
+          _buildReviewsList(colorScheme, textTheme),
         ],
       ),
     );
@@ -281,6 +289,58 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
           final post = _followingPosts[index];
           return PostCard(post: post);
         },
+      ),
+    );
+  }
+
+  Widget _buildReviewsList(ColorScheme colorScheme, TextTheme textTheme) {
+    final reviews = _allReviews;
+    if (_isLoadingReviews && reviews.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (reviews.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _loadPosts,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.2),
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                children: [
+                  Icon(Icons.rate_review_outlined, size: 54, color: colorScheme.primary),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Todavía no hay reseñas',
+                    style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Calificá una película o un tema desde Buscar o Publicar y sumá tu opinión: aparece acá.',
+                    textAlign: TextAlign.center,
+                    style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadPosts,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: reviews.length,
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        separatorBuilder: (_, _) => Divider(
+          height: 1,
+          color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+        ),
+        itemBuilder: (context, index) => PostCard(post: reviews[index]),
       ),
     );
   }

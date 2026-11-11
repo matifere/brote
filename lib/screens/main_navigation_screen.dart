@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/chat_unread_service.dart';
 import '../widgets/brote_logo.dart';
 import 'auth_screen.dart';
 import 'chats_screen.dart';
@@ -151,16 +152,44 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               index: _currentIndex,
               children: _pages,
             ),
-            bottomNavigationBar: NavigationBar(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: _selectTab,
-              destinations: _navItems.map((item) {
-                return NavigationDestination(
-                  icon: Icon(item.icon),
-                  selectedIcon: Icon(item.selectedIcon),
-                  label: item.label,
-                );
-              }).toList(),
+            bottomNavigationBar: ValueListenableBuilder<int>(
+              valueListenable: ChatUnreadService().unreadChats,
+              builder: (context, unreadChats, _) => NavigationBar(
+                selectedIndex: _currentIndex,
+                onDestinationSelected: _selectTab,
+                destinations: [
+                  const NavigationDestination(
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home_rounded),
+                    label: 'Feed',
+                  ),
+                  const NavigationDestination(
+                    icon: Icon(Icons.search_rounded),
+                    selectedIcon: Icon(Icons.search_rounded),
+                    label: 'Buscar',
+                  ),
+                  const NavigationDestination(
+                    icon: Icon(Icons.add_box_outlined),
+                    selectedIcon: Icon(Icons.add_box_rounded),
+                    label: 'Publicar',
+                  ),
+                  NavigationDestination(
+                    icon: _withUnreadBadge(const Icon(Icons.chat_bubble_outline_rounded), unreadChats),
+                    selectedIcon: _withUnreadBadge(const Icon(Icons.chat_bubble_rounded), unreadChats),
+                    tooltip: unreadChats == 0
+                        ? null
+                        : unreadChats == 1
+                            ? 'Chats: 1 conversación sin leer'
+                            : 'Chats: $unreadChats conversaciones sin leer',
+                    label: 'Chats',
+                  ),
+                  const NavigationDestination(
+                    icon: Icon(Icons.person_outline_rounded),
+                    selectedIcon: Icon(Icons.person_rounded),
+                    label: 'Perfil',
+                  ),
+                ],
+              ),
             ),
           );
         }
@@ -447,11 +476,82 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     required TextTheme textTheme,
   }) {
     final iconColor = isSelected ? colorScheme.primary : colorScheme.onSurfaceVariant;
-    final icon = Icon(
+    final rawIcon = Icon(
       isSelected ? item.selectedIcon : item.icon,
       color: iconColor,
       size: 24,
     );
+
+    if (index == 3) {
+      return ValueListenableBuilder<int>(
+        valueListenable: ChatUnreadService().unreadChats,
+        builder: (context, count, _) {
+          final icon = _withUnreadBadge(rawIcon, count);
+          final tooltipMessage = count == 0
+              ? (isLarge ? null : item.label)
+              : count == 1
+                  ? 'Chats: 1 conversación sin leer'
+                  : 'Chats: $count conversaciones sin leer';
+
+          Widget content;
+          if (!isLarge) {
+            content = InkWell(
+              onTap: () => _selectTab(index),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? colorScheme.primaryContainer.withValues(alpha: 0.35)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Center(child: icon),
+              ),
+            );
+          } else {
+            content = InkWell(
+              onTap: () => _selectTab(index),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? colorScheme.primaryContainer.withValues(alpha: 0.35)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    icon,
+                    const SizedBox(width: 14),
+                    Text(
+                      item.label,
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                        color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          if (tooltipMessage != null) {
+            return Tooltip(
+              message: tooltipMessage,
+              child: content,
+            );
+          }
+          return content;
+        },
+      );
+    }
+
+    final icon = rawIcon;
 
     if (!isLarge) {
       return Tooltip(
@@ -723,4 +823,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ),
     );
   }
+
+  Widget _withUnreadBadge(Widget icon, int unreadChats) => Badge(
+        isLabelVisible: unreadChats > 0,
+        label: Text(unreadChats > 99 ? '99+' : '$unreadChats'),
+        child: icon,
+      );
 }

@@ -6,8 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/chat_item.dart';
 import '../models/chat_message.dart';
 import '../models/rating.dart';
+import '../models/post_comment.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
+import 'chat_crypto.dart';
 
 class SessionStorage {
   static const String _kTokenKey = 'brote_session_token';
@@ -356,6 +358,111 @@ class AuthService {
     } catch (e) {
       return AuthResponse.failure('Error al conectar con Neon: $e');
     }
+  }
+
+  /// Comments of a post, oldest first. Null when they can't be loaded, e.g. on
+  /// servers that don't have comments yet.
+  Future<List<PostComment>?> getComments(String postId) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/$postId/comments');
+      final response = await http.get(
+        uri,
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true && data['comments'] is List) {
+          return (data['comments'] as List)
+              .map((item) => PostComment.fromJson(item as Map<String, dynamic>))
+              .toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching comments: $e');
+    }
+    return null;
+  }
+
+  /// Adds a comment; returns it with the post's new comment count, or an error message.
+  Future<({PostComment? comment, int? commentsCount, String? error})> addComment(
+    String postId,
+    String content,
+  ) async {
+    final token = _sessionToken;
+    if (token == null) return (comment: null, commentsCount: null, error: 'Sesión no iniciada');
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/$postId/comments');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'content': content.trim()}),
+      ).timeout(const Duration(seconds: 12));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true && data['comment'] != null) {
+        return (
+          comment: PostComment.fromJson(data['comment'] as Map<String, dynamic>),
+          commentsCount: (data['commentsCount'] as num?)?.toInt(),
+          error: null,
+        );
+      }
+      return (comment: null, commentsCount: null, error: data['error'] as String? ?? 'No se pudo comentar');
+    } catch (e) {
+      debugPrint('Error adding comment: $e');
+      return (comment: null, commentsCount: null, error: 'No se pudo comentar. Revisá tu conexión.');
+    }
+  }
+
+  /// Deletes a comment (yours, or any on your post). Returns the post's new comment count.
+  Future<int?> deleteComment(String postId, String commentId) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/$postId/comments/$commentId');
+      final response = await http.delete(
+        uri,
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        return (data['commentsCount'] as num?)?.toInt() ?? 0;
+      }
+    } catch (e) {
+      debugPrint('Error deleting comment: $e');
+    }
+    return null;
+  }
+
+  /// Deletes one of your posts; feeds and profiles reload on success.
+  Future<bool> deletePost(String postId) async {
+    final token = _sessionToken;
+    if (token == null) return false;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/$postId');
+      final response = await http.delete(
+        uri,
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200 && jsonDecode(response.body)['success'] == true) {
+        postsRefreshNotifier.value++;
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Error deleting post: $e');
+    }
+    return false;
   }
 
   /// Applies a change to the ratings stored in the bio, keeping the rest of the profile intact
@@ -1091,5 +1198,7 @@ class AuthService {
     _currentUser = null;
     currentUserNotifier.value = null;
     await SessionStorage.clear();
+    // The chat key backup stays on the server; only this device's copy is removed
+    await ChatCrypto().clear();
   }
 }

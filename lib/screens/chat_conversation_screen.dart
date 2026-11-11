@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:typed_data';
+import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import '../models/chat_message.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/chat_crypto.dart';
+import '../widgets/chat_password_dialog.dart';
 import '../widgets/full_screen_image_viewer.dart';
 import 'profile_screen.dart';
 
@@ -34,11 +39,20 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   bool _isPolling = false;
   Timer? _pollingTimer;
 
+  /// Key shared with the other person; null while the chat isn't encrypted.
+  SecretKey? _conversationKey;
+  bool _isCryptoBusy = false;
+  final Map<String, SecureChatPayload> _decrypted = {};
+  final Set<String> _undecryptable = {};
+  final Map<String, Future<Uint8List?>> _secureImages = {};
+
   @override
   void initState() {
     super.initState();
     _otherParticipant = widget.otherParticipant;
+    ChatCrypto().status.addListener(_onCryptoStatusChanged);
     _loadMessages();
+    _prepareEncryption();
 
     // Poll for new messages every 3.5 seconds while open
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 3500), (_) {
@@ -49,6 +63,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   void dispose() {
     _pollingTimer?.cancel();
+    ChatCrypto().status.removeListener(_onCryptoStatusChanged);
     _inputFocusNode.dispose();
     _messageController.dispose();
     _scrollController.dispose();
@@ -68,6 +83,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         _isLoading = false;
       });
       _scrollToBottom();
+      _decryptMessages();
     } else {
       setState(() => _isLoading = false);
     }
@@ -90,9 +106,92 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         });
         _scrollToBottom();
       }
+      // The other person may have turned on encryption since the chat was opened
+      if (_conversationKey == null && ChatCrypto().status.value == ChatCryptoStatus.ready) {
+        await _loadConversationKey();
+      } else {
+        await _decryptMessages();
+      }
     } finally {
       _isPolling = false;
     }
+  }
+
+  void _onCryptoStatusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Loads this device's chat key and the key shared with the other person.
+  Future<void> _prepareEncryption() async {
+    await ChatCrypto().refresh();
+    await _loadConversationKey();
+  }
+
+  Future<void> _loadConversationKey() async {
+    final key = await ChatCrypto().keyForConversation(widget.conversationId, _otherParticipant.id);
+    if (!mounted) return;
+    setState(() {
+      _conversationKey = key;
+      _undecryptable.clear();
+    });
+    await _decryptMessages();
+  }
+
+  /// Decrypts messages that haven't been read yet; plaintext is cached by message id.
+  Future<void> _decryptMessages() async {
+    final key = _conversationKey;
+    if (key == null) return;
+    var changed = false;
+    for (final msg in List.of(_messages)) {
+      if (!ChatCipher.isEncrypted(msg.content) ||
+          _decrypted.containsKey(msg.id) ||
+          _undecryptable.contains(msg.id)) {
+        continue;
+      }
+      final payload = await ChatCipher.decryptPayload(msg.content, key);
+      if (payload != null) {
+        _decrypted[msg.id] = payload;
+      } else {
+        _undecryptable.add(msg.id);
+      }
+      changed = true;
+    }
+    if (changed && mounted) setState(() {});
+  }
+
+  Future<void> _setUpEncryption() async {
+    final result = await showChatPasswordDialog(context, mode: ChatPasswordMode.create);
+    if (result?.password == null || !mounted) return;
+    await _runCryptoAction(() => ChatCrypto().createKeys(result!.password!));
+  }
+
+  Future<void> _unlockEncryption() async {
+    final result = await showChatPasswordDialog(context, mode: ChatPasswordMode.unlock);
+    if (result == null || !mounted) return;
+
+    if (result.forgotPassword) {
+      final reset = await showChatPasswordDialog(context, mode: ChatPasswordMode.reset);
+      if (reset?.password == null || !mounted) return;
+      await _runCryptoAction(() => ChatCrypto().createKeys(reset!.password!));
+      return;
+    }
+    await _runCryptoAction(() => ChatCrypto().unlock(result.password!));
+  }
+
+  /// Runs a key operation (which can take a couple of seconds). Success shows in
+  /// the encryption banner; only errors get a snackbar, which would cover the input.
+  Future<void> _runCryptoAction(Future<String?> Function() action) async {
+    setState(() => _isCryptoBusy = true);
+    final error = await action();
+    if (!mounted) return;
+    setState(() => _isCryptoBusy = false);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error), backgroundColor: Theme.of(context).colorScheme.error),
+      );
+      return;
+    }
+    await _loadConversationKey();
   }
 
   /// The chat upload endpoint returns a server-relative path
@@ -114,17 +213,26 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     });
   }
 
-  Future<void> _handleSendMessage({String? mediaUrl}) async {
+  Future<void> _handleSendMessage({String? mediaUrl, SecureChatImage? secureImage}) async {
     if (_isSending) return;
     final text = _messageController.text.trim();
-    if (text.isEmpty && mediaUrl == null) return;
+    if (text.isEmpty && mediaUrl == null && secureImage == null) return;
 
     _messageController.clear();
     setState(() => _isSending = true);
 
+    // With a shared key, the text (and any encrypted photo's key) only leaves the device encrypted
+    final key = _conversationKey;
+    SecureChatPayload? payload;
+    String? content = text.isNotEmpty ? text : null;
+    if (key != null && (text.isNotEmpty || secureImage != null)) {
+      payload = SecureChatPayload(text: text, image: secureImage);
+      content = await ChatCipher.encryptPayload(payload, key);
+    }
+
     final res = await AuthService().sendMessage(
       widget.conversationId,
-      content: text.isNotEmpty ? text : null,
+      content: content,
       mediaUrl: mediaUrl,
     );
 
@@ -135,6 +243,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
     if (res['success'] == true && res['message'] != null) {
       final sent = res['message'] as ChatMessage;
+      if (payload != null) _decrypted[sent.id] = payload;
       setState(() {
         // A poll may have already picked this message up while the send was in flight.
         if (!_messages.any((m) => m.id == sent.id)) {
@@ -200,12 +309,19 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         );
 
+        // In encrypted chats only ciphertext is uploaded, since media URLs are public
+        final key = _conversationKey;
+        final (uploadBytes, imageKey) =
+            key != null ? await ChatCipher.encryptImage(bytes) : (bytes, null);
         final imageUrl = await AuthService().uploadChatImage(
-          bytes,
-          filename: picked.name,
+          uploadBytes,
+          filename: imageKey != null ? 'foto.enc' : picked.name,
         );
 
-        if (imageUrl != null) {
+        if (imageUrl != null && imageKey != null) {
+          _secureImages[imageUrl] = Future.value(bytes);
+          await _handleSendMessage(secureImage: SecureChatImage(url: imageUrl, key: imageKey));
+        } else if (imageUrl != null) {
           await _handleSendMessage(mediaUrl: imageUrl);
         } else {
           if (mounted) {
@@ -345,6 +461,150 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     );
   }
 
+  Future<Uint8List?> _secureImageBytes(SecureChatImage image) {
+    return _secureImages.putIfAbsent(image.url, () async {
+      try {
+        final response = await http.get(Uri.parse(_resolveMediaUrl(image.url))).timeout(const Duration(seconds: 30));
+        if (response.statusCode != 200) return null;
+        return await ChatCipher.decryptImage(response.bodyBytes, image.key);
+      } catch (e) {
+        debugPrint('Error loading encrypted photo: $e');
+        return null;
+      }
+    });
+  }
+
+  /// Like [_buildMediaThumbnail], for photos that are downloaded and decrypted on the device.
+  Widget _buildSecureThumbnail(ChatMessage msg, SecureChatImage image, bool isMe, ColorScheme colorScheme) {
+    final heroTag = 'chat-media-${msg.id}';
+    final cacheWidth = (_thumbnailMaxWidth * MediaQuery.devicePixelRatioOf(context)).round();
+    final placeholderColor = isMe
+        ? colorScheme.onPrimary.withValues(alpha: 0.15)
+        : colorScheme.onSurface.withValues(alpha: 0.08);
+
+    return FutureBuilder<Uint8List?>(
+      future: _secureImageBytes(image),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Container(
+            width: 180,
+            height: 180,
+            color: placeholderColor,
+            alignment: Alignment.center,
+            child: const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        }
+        final bytes = snapshot.data;
+        if (bytes == null) {
+          return Container(
+            width: 140,
+            height: 100,
+            color: placeholderColor,
+            alignment: Alignment.center,
+            child: const Icon(Icons.broken_image_rounded),
+          );
+        }
+        return MouseRegion(
+          cursor: SystemMouseCursors.zoomIn,
+          child: GestureDetector(
+            onTap: () => openFullScreenImage(
+              context,
+              image: MemoryImage(bytes),
+              heroTag: heroTag,
+              thumbnailCacheWidth: cacheWidth,
+              title: msg.isMe ? 'Vos' : msg.senderName,
+              subtitle: msg.timeFormatted.isEmpty ? null : msg.timeFormatted,
+            ),
+            child: Hero(
+              tag: heroTag,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: _thumbnailMaxWidth,
+                    maxHeight: _thumbnailMaxHeight,
+                  ),
+                  child: Image.memory(bytes, cacheWidth: cacheWidth, fit: BoxFit.cover),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEncryptionBanner(ColorScheme colorScheme, TextTheme textTheme) {
+    final status = ChatCrypto().status.value;
+    if (status == ChatCryptoStatus.checking) return const SizedBox.shrink();
+
+    final username = _otherParticipant.username;
+    final isEncrypted = _conversationKey != null;
+    final (IconData icon, String message, String? actionLabel, VoidCallback? action) = switch (status) {
+      ChatCryptoStatus.needsSetup => (
+          Icons.lock_outline_rounded,
+          'Activá el cifrado de punta a punta para que solo vos y @$username puedan leer los mensajes.',
+          'Activar',
+          _setUpEncryption,
+        ),
+      ChatCryptoStatus.locked => (
+          Icons.lock_outline_rounded,
+          'Ingresá tu contraseña de chat para leer y enviar mensajes cifrados.',
+          'Desbloquear',
+          _unlockEncryption,
+        ),
+      ChatCryptoStatus.ready when isEncrypted => (
+          Icons.lock_rounded,
+          'Cifrado de punta a punta: solo vos y @$username pueden leer estos mensajes y fotos.',
+          null,
+          null,
+        ),
+      ChatCryptoStatus.ready => (
+          Icons.lock_open_rounded,
+          '@$username todavía no activó el cifrado: los mensajes se envían sin cifrar.',
+          null,
+          null,
+        ),
+      _ => (
+          Icons.lock_open_rounded,
+          'Este chat no está cifrado: el servidor todavía no tiene el cifrado de punta a punta.',
+          null,
+          null,
+        ),
+    };
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: isEncrypted
+            ? colorScheme.primaryContainer.withValues(alpha: 0.25)
+            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: isEncrypted ? colorScheme.primary : colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+          ),
+          if (_isCryptoBusy)
+            const Padding(
+              padding: EdgeInsets.only(left: 8),
+              child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (actionLabel != null)
+            TextButton(onPressed: action, child: Text(actionLabel)),
+        ],
+      ),
+    );
+  }
+
   void _openParticipantProfile() {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -449,6 +709,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
           child: Column(
             children: [
+              _buildEncryptionBanner(colorScheme, textTheme),
+
               // Messages stream
               Expanded(
                 child: _isLoading
@@ -486,6 +748,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                             itemBuilder: (context, index) {
                               final msg = _messages[index];
                               final isMe = msg.isMe;
+                              final isEncrypted = ChatCipher.isEncrypted(msg.content);
+                              final payload = _decrypted[msg.id];
+                              final text = isEncrypted ? (payload?.text ?? '') : msg.content;
+                              final secureImage = payload?.image;
+                              final hasMedia =
+                                  (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) || secureImage != null;
+                              final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
 
                               return Align(
                                 alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -511,17 +780,37 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                                     isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                                 children: [
                                   // Optional Media Image
-                                  if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) ...[
+                                  if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty)
                                     _buildMediaThumbnail(msg, isMe, colorScheme),
-                                    if (msg.content.isNotEmpty) const SizedBox(height: 8),
-                                  ],
+                                  if (secureImage != null)
+                                    _buildSecureThumbnail(msg, secureImage, isMe, colorScheme),
+                                  if (hasMedia && text.isNotEmpty) const SizedBox(height: 8),
+
+                                  // Encrypted message this device can't read (locked or old keys)
+                                  if (isEncrypted && payload == null)
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.lock_outline_rounded,
+                                            size: 14, color: textColor.withValues(alpha: 0.8)),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'Mensaje cifrado',
+                                          style: TextStyle(
+                                            color: textColor.withValues(alpha: 0.8),
+                                            fontSize: 14.5,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
 
                                   // Text content
-                                  if (msg.content.isNotEmpty)
+                                  if (text.isNotEmpty)
                                     Text(
-                                      msg.content,
+                                      text,
                                       style: TextStyle(
-                                        color: isMe ? colorScheme.onPrimary : colorScheme.onSurface,
+                                        color: textColor,
                                         fontSize: 14.5,
                                         height: 1.35,
                                       ),
@@ -532,6 +821,16 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                                   Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
+                                      if (isEncrypted) ...[
+                                        Icon(
+                                          Icons.lock_rounded,
+                                          size: 10,
+                                          color: isMe
+                                              ? colorScheme.onPrimary.withValues(alpha: 0.75)
+                                              : colorScheme.onSurfaceVariant,
+                                        ),
+                                        const SizedBox(width: 3),
+                                      ],
                                       Text(
                                         msg.timeFormatted,
                                         style: TextStyle(

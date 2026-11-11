@@ -43,9 +43,11 @@ class CatalogService {
   static const String _wikidataEndpoint = 'https://www.wikidata.org/w/api.php';
   static const String _itunesEndpoint = 'https://itunes.apple.com/search';
 
-  /// Restricts results to films: feature, animated feature, animated, documentary and short films.
+  /// Restricts results to films (feature, animated feature, animated, documentary and short films)
+  /// and TV series (series, animated series, miniseries and anime series).
   static const String _filmFilter =
-      'haswbstatement:P31=Q11424|P31=Q29168811|P31=Q202866|P31=Q93204|P31=Q24869';
+      'haswbstatement:P31=Q11424|P31=Q29168811|P31=Q202866|P31=Q93204|P31=Q24869'
+      '|P31=Q5398426|P31=Q581714|P31=Q1259759|P31=Q63952888';
 
   static final RegExp _yearPattern = RegExp(r'\b(1[89]\d{2}|20\d{2})\b');
 
@@ -168,6 +170,8 @@ class CatalogService {
       final entities = (jsonDecode(responses[0].body)['entities'] as Map<String, dynamic>?) ?? {};
       final results = <CatalogItem>[];
       final missingImageSitelinks = <String, String>{}; // qid -> eswiki title
+      // Entities without a Spanish label are skipped, so results[i] isn't ids[i]
+      final resultIds = <String>[];
 
       for (final id in ids) {
         final entity = entities[id] as Map<String, dynamic>?;
@@ -210,6 +214,7 @@ class CatalogService {
           _cachePoster(title.trim(), year: year, url: imageUrl);
         }
 
+        resultIds.add(id);
         results.add(CatalogItem(
           category: RatingCategory.movie,
           title: title.trim(),
@@ -246,8 +251,7 @@ class CatalogService {
             for (var i = 0; i < results.length; i++) {
               final item = results[i];
               if (item.imageUrl == null) {
-                final qid = ids.elementAtOrNull(i);
-                final wikiTitle = qid != null ? missingImageSitelinks[qid] : null;
+                final wikiTitle = missingImageSitelinks[resultIds[i]];
                 final thumb = wikiTitle != null ? wikiThumbs[wikiTitle] : null;
                 if (thumb != null && thumb.isNotEmpty) {
                   _cachePoster(item.title, year: item.year, url: thumb);

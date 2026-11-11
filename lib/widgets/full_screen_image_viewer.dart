@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Opens [imageUrl] in a full-screen viewer with a fade + Hero transition.
+/// Opens a photo in a full-screen viewer with a fade + Hero transition.
+///
+/// Pass exactly one of [imageUrl] (loaded from the network) or [image]
+/// (an image already in memory, e.g. `MemoryImage(decryptedBytes)`).
 ///
 /// If the image is already on screen as a thumbnail decoded with
 /// `cacheWidth: thumbnailCacheWidth`, pass that width so the viewer can show
 /// the cached thumbnail while the full-resolution image loads.
 Future<void> openFullScreenImage(
   BuildContext context, {
-  required String imageUrl,
+  String? imageUrl,
+  ImageProvider? image,
   required Object heroTag,
   int? thumbnailCacheWidth,
   String? title,
@@ -22,6 +26,7 @@ Future<void> openFullScreenImage(
       reverseTransitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (_, _, _) => FullScreenImageViewer(
         imageUrl: imageUrl,
+        image: image,
         heroTag: heroTag,
         thumbnailCacheWidth: thumbnailCacheWidth,
         title: title,
@@ -36,7 +41,8 @@ Future<void> openFullScreenImage(
 /// Instagram-style photo viewer: black background, pinch or double-tap to
 /// zoom, drag down/up (when not zoomed) or press Esc to close.
 class FullScreenImageViewer extends StatefulWidget {
-  final String imageUrl;
+  final String? imageUrl;
+  final ImageProvider? image;
   final Object heroTag;
   final int? thumbnailCacheWidth;
   final String? title;
@@ -44,12 +50,13 @@ class FullScreenImageViewer extends StatefulWidget {
 
   const FullScreenImageViewer({
     super.key,
-    required this.imageUrl,
+    this.imageUrl,
+    this.image,
     required this.heroTag,
     this.thumbnailCacheWidth,
     this.title,
     this.subtitle,
-  });
+  }) : assert((imageUrl == null) != (image == null), 'Pass exactly one of imageUrl or image');
 
   @override
   State<FullScreenImageViewer> createState() => _FullScreenImageViewerState();
@@ -69,6 +76,8 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
     _transformController.dispose();
     super.dispose();
   }
+
+  ImageProvider get _imageProvider => widget.image ?? NetworkImage(widget.imageUrl!);
 
   void _close() => Navigator.of(context).maybePop();
 
@@ -118,12 +127,12 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
     if (width == null) {
       return const Center(child: CircularProgressIndicator(color: Colors.white));
     }
-    // Same provider key as Image.network(cacheWidth: width): already in cache.
+    // Same provider key as Image.network/Image.memory(cacheWidth: width): already in cache.
     return Stack(
       alignment: Alignment.center,
       children: [
         Image(
-          image: ResizeImage(NetworkImage(widget.imageUrl), width: width),
+          image: ResizeImage(_imageProvider, width: width),
           fit: BoxFit.contain,
           errorBuilder: (_, _, _) => const SizedBox.shrink(),
         ),
@@ -165,8 +174,8 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
                         child: Center(
                           child: Hero(
                             tag: widget.heroTag,
-                            child: Image.network(
-                              widget.imageUrl,
+                            child: Image(
+                              image: _imageProvider,
                               fit: BoxFit.contain,
                               loadingBuilder: (context, child, progress) =>
                                   progress == null ? child : _buildPlaceholder(),

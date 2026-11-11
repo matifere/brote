@@ -350,6 +350,7 @@ async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | 
     avatarUrl: profileRow.avatar_url,
     bannerUrl: profileRow.banner_url,
     isPrivate,
+    isVerified: Boolean(profileRow.is_verified),
     followersCount,
     followingCount,
     pendingRequestsCount,
@@ -369,7 +370,7 @@ app.get("/api/profile/me", async (c) => {
 
     const p = getPool();
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     if (profileRes.rows.length === 0) {
@@ -433,7 +434,7 @@ const updateProfileHandler = async (c: any) => {
     }
 
     values.push(auth.userId);
-    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private`;
+    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified`;
     const updateRes = await p.query(sql, values);
 
     // Keep auth user name synced
@@ -693,7 +694,7 @@ app.get("/api/profiles/search", async (c) => {
 
     const p = getPool();
     const res = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        WHERE lower(username) LIKE $1 OR lower(display_name) LIKE $1
        ORDER BY
@@ -715,6 +716,7 @@ app.get("/api/profiles/search", async (c) => {
       avatarUrl: row.avatar_url,
       bannerUrl: row.banner_url,
       isPrivate: Boolean(row.is_private),
+      isVerified: Boolean(row.is_verified),
     }));
 
     return c.json({ success: true, results });
@@ -728,7 +730,7 @@ app.get("/api/profiles/suggested", async (c) => {
   try {
     const p = getPool();
     const res = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        ORDER BY updated_at DESC NULLS LAST, created_at DESC
        LIMIT 10`
@@ -742,6 +744,7 @@ app.get("/api/profiles/suggested", async (c) => {
       avatarUrl: row.avatar_url,
       bannerUrl: row.banner_url,
       isPrivate: Boolean(row.is_private),
+      isVerified: Boolean(row.is_verified),
     }));
 
     return c.json({ success: true, results });
@@ -757,7 +760,7 @@ app.get("/api/profile/:username", async (c) => {
     const auth = await getAuthenticatedUser(c);
     const p = getPool();
     const res = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE lower(username) = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE lower(username) = $1",
       [username]
     );
     if (res.rows.length === 0) {
@@ -785,7 +788,7 @@ app.post("/api/profile/:target/follow", async (c) => {
     const p = getPool();
 
     const targetRes = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        WHERE id::text = $1 OR lower(username) = lower($1)
        LIMIT 1`,
@@ -810,6 +813,12 @@ app.post("/api/profile/:target/follow", async (c) => {
        SET status = EXCLUDED.status, created_at = now()`,
       [auth.userId, target.id, targetStatus]
     );
+
+    await notify(p, {
+      recipientId: target.id,
+      actorId: auth.userId,
+      type: targetStatus === "pending" ? "follow_request" : "follow",
+    });
 
     const profilePayload = await buildProfilePayload(p, target, auth.userId);
     return c.json({
@@ -836,7 +845,7 @@ app.post("/api/profile/:target/unfollow", async (c) => {
     const p = getPool();
 
     const targetRes = await p.query(
-      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private
+      `SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified
        FROM public.profiles
        WHERE id::text = $1 OR lower(username) = lower($1)
        LIMIT 1`,
@@ -854,6 +863,9 @@ app.post("/api/profile/:target/unfollow", async (c) => {
        WHERE follower_id = $1 AND following_id = $2`,
       [auth.userId, target.id]
     );
+
+    await clearNotification(p, { recipientId: target.id, actorId: auth.userId, type: "follow" });
+    await clearNotification(p, { recipientId: target.id, actorId: auth.userId, type: "follow_request" });
 
     const profilePayload = await buildProfilePayload(p, target, auth.userId);
     return c.json({
@@ -925,8 +937,11 @@ app.post("/api/profile/follow-requests/:followerId/accept", async (c) => {
       return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
     }
 
+    await clearNotification(p, { recipientId: auth.userId, actorId: followerId, type: "follow_request" });
+    await notify(p, { recipientId: followerId, actorId: auth.userId, type: "follow_accepted" });
+
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
@@ -963,8 +978,10 @@ app.post("/api/profile/follow-requests/:followerId/reject", async (c) => {
       return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
     }
 
+    await clearNotification(p, { recipientId: auth.userId, actorId: followerId, type: "follow_request" });
+
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
@@ -1118,7 +1135,7 @@ app.post("/api/posts", async (c) => {
 
     // Fetch author profile
     const authorRes = await p.query(
-      "SELECT id, username, display_name, avatar_url, is_private FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, avatar_url, is_private, is_verified FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const author = authorRes.rows[0];
@@ -1131,7 +1148,7 @@ app.post("/api/posts", async (c) => {
         authorName: author?.display_name || author?.username || "Usuario",
         authorUsername: author?.username || "usuario",
         authorAvatarUrl: author?.avatar_url,
-        isVerified: true,
+        isVerified: Boolean(author?.is_verified),
         content: postRow.content || "",
         imageUrl: postRow.image_url,
         likesCount: postRow.likes_count || 0,
@@ -1147,6 +1164,20 @@ app.post("/api/posts", async (c) => {
   }
 });
 
+// Posts can be marked to last 24 hours: the app adds a last line "⏳ 24 h" (see its PostContent).
+// Expired ones are hidden from every listing and deleted at most once an hour.
+// COALESCE: image-only posts have no content, and NULL would hide them from every listing
+const EXPIRED_POST = `(COALESCE(p.content, '') ~ '(^|\\n)⏳ 24 h$' AND p.created_at < now() - interval '24 hours')`;
+const NOT_EXPIRED_POST = `NOT ${EXPIRED_POST}`;
+let lastExpiredPurge = 0;
+function purgeExpiredPosts(p: Pool): void {
+  if (Date.now() - lastExpiredPurge < 60 * 60 * 1000) return;
+  lastExpiredPurge = Date.now();
+  p.query(`DELETE FROM public.posts p WHERE ${EXPIRED_POST}`).catch((err) => {
+    console.error("Expired posts purge error:", err.message);
+  });
+}
+
 // Helper for formatting post rows
 function mapPostRow(row: any) {
   return {
@@ -1155,7 +1186,7 @@ function mapPostRow(row: any) {
     authorName: row.author_name || row.author_username || "Usuario",
     authorUsername: row.author_username || "usuario",
     authorAvatarUrl: row.author_avatar_url,
-    isVerified: true,
+    isVerified: Boolean(row.author_is_verified),
     content: row.content || "",
     imageUrl: row.image_url || null,
     likesCount: Number(row.likes_count || 0),
@@ -1172,8 +1203,9 @@ app.get("/api/posts/feed", async (c) => {
   try {
     const auth = await getAuthenticatedUser(c);
     const viewerId = auth?.userId || null;
-    const filter = c.req.query("filter"); // "following" or undefined
+    const filter = c.req.query("filter"); // "following", "reviews" or undefined
     const p = getPool();
+    purgeExpiredPosts(p);
 
     if (filter === "following") {
       if (!viewerId) {
@@ -1193,11 +1225,13 @@ app.get("/api/posts/feed", async (c) => {
           pr.display_name as author_name,
           pr.avatar_url as author_avatar_url,
           pr.is_private as author_is_private,
+          pr.is_verified as author_is_verified,
           EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid) as is_liked,
           true as is_following_author
         FROM public.posts p
         INNER JOIN public.profiles pr ON p.author_id = pr.id
         INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
+        WHERE ${NOT_EXPIRED_POST}
         ORDER BY p.created_at DESC
         LIMIT 50;
       `;
@@ -1222,21 +1256,25 @@ app.get("/api/posts/feed", async (c) => {
         pr.display_name as author_name,
         pr.avatar_url as author_avatar_url,
         pr.is_private as author_is_private,
+        pr.is_verified as author_is_verified,
         ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid)) as is_liked,
         ($1::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')) as is_following_author
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
       WHERE
-        pr.is_private = false
-        OR ($1::uuid IS NOT NULL AND (
-             p.author_id = $1::uuid
-             OR EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')
-           ))
+        (pr.is_private = false
+          OR ($1::uuid IS NOT NULL AND (
+               p.author_id = $1::uuid
+               OR EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')
+             )))
+        -- "reviews": posts whose first line is a movie or music review (see the app's PostContent)
+        AND ($2::boolean = false OR p.content ~ '^(🎬|🎵) ')
+        AND ${NOT_EXPIRED_POST}
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
 
-    const res = await p.query(sql, [viewerId]);
+    const res = await p.query(sql, [viewerId, filter === "reviews"]);
     return c.json({
       success: true,
       posts: res.rows.map(mapPostRow),
@@ -1271,11 +1309,13 @@ app.get("/api/posts/following", async (c) => {
         pr.display_name as author_name,
         pr.avatar_url as author_avatar_url,
         pr.is_private as author_is_private,
+        pr.is_verified as author_is_verified,
         EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1::uuid) as is_liked,
         true as is_following_author
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
       INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
+      WHERE ${NOT_EXPIRED_POST}
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -1345,10 +1385,11 @@ app.get("/api/posts/user/:target", async (c) => {
         pr.display_name as author_name,
         pr.avatar_url as author_avatar_url,
         pr.is_private as author_is_private,
+        pr.is_verified as author_is_verified,
         ($2::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $2::uuid)) as is_liked
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
-      WHERE p.author_id = $1
+      WHERE p.author_id = $1 AND ${NOT_EXPIRED_POST}
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -1404,8 +1445,14 @@ app.post("/api/posts/:id/like", async (c) => {
       isLiked = true;
     }
 
-    const countRes = await p.query("SELECT likes_count FROM public.posts WHERE id = $1", [postId]);
+    const countRes = await p.query("SELECT likes_count, author_id FROM public.posts WHERE id = $1", [postId]);
     const likesCount = countRes.rows[0]?.likes_count ?? 0;
+
+    const authorId = countRes.rows[0]?.author_id;
+    if (authorId) {
+      const event = { recipientId: authorId, actorId: auth.userId, type: "like" as const, postId };
+      await (isLiked ? notify(p, event) : clearNotification(p, event));
+    }
 
     return c.json({
       success: true,
@@ -1779,6 +1826,14 @@ app.post("/api/chats/:conversationId/messages", async (c) => {
       [conversationId, auth.userId]
     );
 
+    const recipientsRes = await p.query(
+      "SELECT user_id FROM public.conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+      [conversationId, auth.userId]
+    );
+    for (const row of recipientsRes.rows) {
+      await notify(p, { recipientId: row.user_id, actorId: auth.userId, type: "message", conversationId });
+    }
+
     // Get sender info
     const senderRes = await p.query(
       "SELECT username, display_name, avatar_url FROM public.profiles WHERE id = $1",
@@ -2017,5 +2072,500 @@ const followListHandler = (direction: "followers" | "following") => async (c: an
 
 app.get("/api/profile/:target/followers", followListHandler("followers"));
 app.get("/api/profile/:target/following", followListHandler("following"));
+
+// End-to-end encrypted chats: the server keeps each user's public key and their
+// private key encrypted with a chat password only they know. Messages and photos
+// are encrypted on the device, so the server never sees their plaintext.
+let chatKeysTable: Promise<void> | null = null;
+function ensureChatKeysTable(p: Pool): Promise<void> {
+  if (!chatKeysTable) {
+    chatKeysTable = p
+      .query(
+        `CREATE TABLE IF NOT EXISTS public.chat_keys (
+           user_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+           public_key TEXT NOT NULL,
+           encrypted_private_key TEXT NOT NULL,
+           key_nonce TEXT NOT NULL,
+           kdf_salt TEXT NOT NULL,
+           kdf_iterations INTEGER NOT NULL,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+         )`
+      )
+      .then(() => undefined)
+      .catch((err) => {
+        chatKeysTable = null;
+        throw err;
+      });
+  }
+  return chatKeysTable;
+}
+
+// Canonical base64 that decodes to exactly `bytes` bytes
+function isBase64OfLength(value: unknown, bytes: number): value is string {
+  if (typeof value !== "string") return false;
+  const decoded = Buffer.from(value, "base64");
+  return decoded.length === bytes && decoded.toString("base64") === value;
+}
+
+// Own key bundle (only the owner gets the encrypted private key)
+app.get("/api/keys/me", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureChatKeysTable(p);
+    const res = await p.query(
+      `SELECT public_key, encrypted_private_key, key_nonce, kdf_salt, kdf_iterations
+       FROM public.chat_keys WHERE user_id = $1`,
+      [auth.userId]
+    );
+    const row = res.rows[0];
+    return c.json({
+      success: true,
+      keyBundle: row
+        ? {
+            publicKey: row.public_key,
+            encryptedPrivateKey: row.encrypted_private_key,
+            nonce: row.key_nonce,
+            salt: row.kdf_salt,
+            iterations: row.kdf_iterations,
+          }
+        : null,
+    });
+  } catch (err: any) {
+    console.error("Get chat keys error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener las claves" }, 500);
+  }
+});
+
+// Create or replace own key bundle
+app.put("/api/keys/me", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const { publicKey, encryptedPrivateKey, nonce, salt, iterations } = body as Record<string, unknown>;
+    const validIterations =
+      typeof iterations === "number" && Number.isInteger(iterations) && iterations >= 100000 && iterations <= 5000000;
+    if (
+      !isBase64OfLength(publicKey, 32) ||
+      !isBase64OfLength(encryptedPrivateKey, 48) ||
+      !isBase64OfLength(nonce, 12) ||
+      !isBase64OfLength(salt, 16) ||
+      !validIterations
+    ) {
+      return c.json({ success: false, error: "Claves inválidas." }, 400);
+    }
+
+    const p = getPool();
+    await ensureChatKeysTable(p);
+    await p.query(
+      `INSERT INTO public.chat_keys (user_id, public_key, encrypted_private_key, key_nonce, kdf_salt, kdf_iterations)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (user_id) DO UPDATE SET
+         public_key = EXCLUDED.public_key,
+         encrypted_private_key = EXCLUDED.encrypted_private_key,
+         key_nonce = EXCLUDED.key_nonce,
+         kdf_salt = EXCLUDED.kdf_salt,
+         kdf_iterations = EXCLUDED.kdf_iterations,
+         updated_at = now()`,
+      [auth.userId, publicKey, encryptedPrivateKey, nonce, salt, iterations]
+    );
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("Save chat keys error:", err);
+    return c.json({ success: false, error: err.message || "Error al guardar las claves" }, 500);
+  }
+});
+
+// Another user's public key (null when they haven't turned on encryption)
+app.get("/api/keys/:userId", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureChatKeysTable(p);
+    const res = await p.query(
+      "SELECT public_key FROM public.chat_keys WHERE user_id::text = $1",
+      [c.req.param("userId")]
+    );
+    return c.json({ success: true, publicKey: res.rows[0]?.public_key ?? null });
+  } catch (err: any) {
+    console.error("Get public chat key error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener la clave" }, 500);
+  }
+});
+
+// Comments on posts (public.post_comments from the initial migration)
+let postCommentsTable: Promise<void> | null = null;
+function ensurePostCommentsTable(p: Pool): Promise<void> {
+  if (!postCommentsTable) {
+    postCommentsTable = p
+      .query(
+        `CREATE TABLE IF NOT EXISTS public.post_comments (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           post_id UUID NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+           author_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+           content TEXT NOT NULL,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+         );
+         CREATE INDEX IF NOT EXISTS idx_post_comments_post_id ON public.post_comments (post_id, created_at ASC);`
+      )
+      .then(() => undefined)
+      .catch((err) => {
+        postCommentsTable = null;
+        throw err;
+      });
+  }
+  return postCommentsTable;
+}
+
+// The post's author when the viewer can see it (public author, the author, or an accepted follower)
+async function visiblePostAuthor(p: Pool, postId: string, viewerId: string): Promise<string | null> {
+  const res = await p.query(
+    `SELECT p.author_id, pr.is_private,
+            EXISTS(SELECT 1 FROM public.follows f
+                   WHERE f.follower_id = $2::uuid AND f.following_id = p.author_id AND f.status = 'accepted') AS follows
+     FROM public.posts p
+     INNER JOIN public.profiles pr ON pr.id = p.author_id
+     WHERE p.id::text = $1 AND ${NOT_EXPIRED_POST}`,
+    [postId, viewerId]
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  if (row.is_private && row.author_id !== viewerId && !row.follows) return null;
+  return row.author_id;
+}
+
+function mapCommentRow(row: any) {
+  return {
+    id: row.id,
+    postId: row.post_id,
+    content: row.content,
+    createdAt: row.created_at,
+    author: {
+      id: row.author_id,
+      username: row.username,
+      displayName: row.display_name,
+      avatarUrl: row.avatar_url,
+    },
+  };
+}
+
+app.get("/api/posts/:id/comments", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const postId = c.req.param("id");
+    const p = getPool();
+    await ensurePostCommentsTable(p);
+    if (!(await visiblePostAuthor(p, postId, auth.userId))) {
+      return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+
+    const res = await p.query(
+      `SELECT cm.id, cm.post_id, cm.content, cm.created_at, cm.author_id, pr.username, pr.display_name, pr.avatar_url
+       FROM public.post_comments cm
+       INNER JOIN public.profiles pr ON pr.id = cm.author_id
+       WHERE cm.post_id = $1
+       ORDER BY cm.created_at ASC
+       LIMIT 200`,
+      [postId]
+    );
+    return c.json({ success: true, comments: res.rows.map(mapCommentRow) });
+  } catch (err: any) {
+    console.error("Get comments error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener los comentarios" }, 500);
+  }
+});
+
+app.post("/api/posts/:id/comments", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const content = typeof body.content === "string" ? body.content.trim() : "";
+    if (!content) {
+      return c.json({ success: false, error: "El comentario no puede estar vacío." }, 400);
+    }
+    if (content.length > 500) {
+      return c.json({ success: false, error: "El comentario no puede superar los 500 caracteres." }, 400);
+    }
+
+    const postId = c.req.param("id");
+    const p = getPool();
+    await ensurePostCommentsTable(p);
+    const authorId = await visiblePostAuthor(p, postId, auth.userId);
+    if (!authorId) {
+      return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+
+    const inserted = await p.query(
+      `INSERT INTO public.post_comments (post_id, author_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [postId, auth.userId, content]
+    );
+    const countRes = await p.query(
+      "UPDATE public.posts SET comments_count = comments_count + 1 WHERE id = $1 RETURNING comments_count",
+      [postId]
+    );
+    await notify(p, { recipientId: authorId, actorId: auth.userId, type: "comment", postId });
+
+    const commentRes = await p.query(
+      `SELECT cm.id, cm.post_id, cm.content, cm.created_at, cm.author_id, pr.username, pr.display_name, pr.avatar_url
+       FROM public.post_comments cm
+       INNER JOIN public.profiles pr ON pr.id = cm.author_id
+       WHERE cm.id = $1`,
+      [inserted.rows[0].id]
+    );
+    return c.json({
+      success: true,
+      comment: mapCommentRow(commentRes.rows[0]),
+      commentsCount: countRes.rows[0]?.comments_count ?? 0,
+    });
+  } catch (err: any) {
+    console.error("Create comment error:", err);
+    return c.json({ success: false, error: err.message || "Error al comentar" }, 500);
+  }
+});
+
+// The comment's author or the post's author can delete a comment
+app.delete("/api/posts/:id/comments/:commentId", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const postId = c.req.param("id");
+    const p = getPool();
+    await ensurePostCommentsTable(p);
+    const res = await p.query(
+      `DELETE FROM public.post_comments cm
+       USING public.posts po
+       WHERE cm.id::text = $1 AND cm.post_id::text = $2 AND po.id = cm.post_id
+         AND (cm.author_id = $3 OR po.author_id = $3)
+       RETURNING cm.post_id`,
+      [c.req.param("commentId"), postId, auth.userId]
+    );
+    if (res.rows.length === 0) {
+      return c.json({ success: false, error: "Comentario no encontrado" }, 404);
+    }
+
+    const countRes = await p.query(
+      "UPDATE public.posts SET comments_count = GREATEST(0, comments_count - 1) WHERE id = $1 RETURNING comments_count",
+      [res.rows[0].post_id]
+    );
+    return c.json({ success: true, commentsCount: countRes.rows[0]?.comments_count ?? 0 });
+  } catch (err: any) {
+    console.error("Delete comment error:", err);
+    return c.json({ success: false, error: err.message || "Error al borrar el comentario" }, 500);
+  }
+});
+
+// Delete own post (likes, comments, media rows and notifications go with it)
+app.delete("/api/posts/:id", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    const res = await p.query(
+      "DELETE FROM public.posts WHERE id::text = $1 AND author_id = $2 RETURNING id",
+      [c.req.param("id"), auth.userId]
+    );
+    if (res.rows.length === 0) {
+      return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("Delete post error:", err);
+    return c.json({ success: false, error: err.message || "Error al borrar la publicación" }, 500);
+  }
+});
+
+// In-app notifications: likes, comments, follows, follow requests (and their acceptance) and messages.
+// Message notifications never include the content, which can be end-to-end encrypted.
+type NotificationType = "like" | "comment" | "follow" | "follow_request" | "follow_accepted" | "message";
+
+interface NotificationEvent {
+  recipientId: string;
+  actorId: string;
+  type: NotificationType;
+  postId?: string | null;
+  conversationId?: string | null;
+}
+
+let notificationsTable: Promise<void> | null = null;
+function ensureNotificationsTable(p: Pool): Promise<void> {
+  if (!notificationsTable) {
+    notificationsTable = p
+      .query(
+        `CREATE TABLE IF NOT EXISTS public.notifications (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           recipient_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+           actor_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+           type VARCHAR(20) NOT NULL,
+           post_id UUID REFERENCES public.posts(id) ON DELETE CASCADE,
+           conversation_id UUID REFERENCES public.conversations(id) ON DELETE CASCADE,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+           read_at TIMESTAMPTZ
+         );
+         CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created
+           ON public.notifications (recipient_id, created_at DESC);`
+      )
+      .then(() => undefined)
+      .catch((err) => {
+        notificationsTable = null;
+        throw err;
+      });
+  }
+  return notificationsTable;
+}
+
+// Removes unread notifications for an event that was undone or handled. Never throws.
+async function clearNotification(p: Pool, event: NotificationEvent): Promise<void> {
+  try {
+    await ensureNotificationsTable(p);
+    await p.query(
+      `DELETE FROM public.notifications
+       WHERE recipient_id = $1 AND actor_id = $2 AND type = $3 AND read_at IS NULL
+         AND post_id IS NOT DISTINCT FROM $4::uuid
+         AND conversation_id IS NOT DISTINCT FROM $5::uuid`,
+      [event.recipientId, event.actorId, event.type, event.postId ?? null, event.conversationId ?? null]
+    );
+  } catch (err: any) {
+    console.error("Clear notification error:", err.message);
+  }
+}
+
+// Records a notification, replacing an unread one for the same event so repeats
+// (like/unlike/like, several messages) don't pile up. Never throws.
+async function notify(p: Pool, event: NotificationEvent): Promise<void> {
+  if (event.recipientId === event.actorId) return;
+  try {
+    await clearNotification(p, event);
+    await p.query(
+      `INSERT INTO public.notifications (recipient_id, actor_id, type, post_id, conversation_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [event.recipientId, event.actorId, event.type, event.postId ?? null, event.conversationId ?? null]
+    );
+  } catch (err: any) {
+    console.error("Notification error:", err.message);
+  }
+}
+
+async function unreadNotificationsCount(p: Pool, userId: string): Promise<number> {
+  const res = await p.query(
+    "SELECT COUNT(*)::int AS count FROM public.notifications WHERE recipient_id = $1 AND read_at IS NULL",
+    [userId]
+  );
+  return res.rows[0]?.count ?? 0;
+}
+
+// Latest notifications with who triggered them
+app.get("/api/notifications", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureNotificationsTable(p);
+    const res = await p.query(
+      `SELECT n.id, n.type, n.post_id, n.conversation_id, n.created_at, n.read_at,
+              a.id AS actor_id, a.username, a.display_name, a.avatar_url,
+              LEFT(po.content, 200) AS post_content
+       FROM public.notifications n
+       INNER JOIN public.profiles a ON a.id = n.actor_id
+       LEFT JOIN public.posts po ON po.id = n.post_id
+       WHERE n.recipient_id = $1
+       ORDER BY n.created_at DESC
+       LIMIT 50`,
+      [auth.userId]
+    );
+
+    return c.json({
+      success: true,
+      unreadCount: await unreadNotificationsCount(p, auth.userId),
+      notifications: res.rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        createdAt: row.created_at,
+        isRead: row.read_at !== null,
+        postId: row.post_id,
+        postContent: row.post_content,
+        conversationId: row.conversation_id,
+        actor: {
+          id: row.actor_id,
+          username: row.username,
+          displayName: row.display_name,
+          avatarUrl: row.avatar_url,
+        },
+      })),
+    });
+  } catch (err: any) {
+    console.error("Notifications error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener las notificaciones" }, 500);
+  }
+});
+
+// Unread count for the badge (cheap enough to poll)
+app.get("/api/notifications/unread-count", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureNotificationsTable(p);
+    return c.json({ success: true, unreadCount: await unreadNotificationsCount(p, auth.userId) });
+  } catch (err: any) {
+    console.error("Unread notifications error:", err);
+    return c.json({ success: false, error: err.message || "Error al contar las notificaciones" }, 500);
+  }
+});
+
+// Mark every notification as read
+app.post("/api/notifications/read", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureNotificationsTable(p);
+    await p.query(
+      "UPDATE public.notifications SET read_at = now() WHERE recipient_id = $1 AND read_at IS NULL",
+      [auth.userId]
+    );
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("Read notifications error:", err);
+    return c.json({ success: false, error: err.message || "Error al marcar las notificaciones" }, 500);
+  }
+});
 
 export default app;

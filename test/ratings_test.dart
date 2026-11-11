@@ -286,8 +286,8 @@ void main() {
 
       await tester.tap(find.text('Películas'));
       await tester.pumpAndSettle();
-      expect(find.text('Buscar una película...'), findsOneWidget);
-      expect(find.text('Calificá tus películas'), findsOneWidget);
+      expect(find.text('Buscar una película o serie...'), findsOneWidget);
+      expect(find.text('Calificá tus películas y series'), findsOneWidget);
 
       expect(find.text('Álbumes'), findsNothing);
 
