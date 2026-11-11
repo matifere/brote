@@ -8,6 +8,7 @@ import '../models/chat_message.dart';
 import '../models/rating.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
+import 'chat_crypto.dart';
 
 class SessionStorage {
   static const String _kTokenKey = 'brote_session_token';
@@ -1091,5 +1092,7 @@ class AuthService {
     _currentUser = null;
     currentUserNotifier.value = null;
     await SessionStorage.clear();
+    // The chat key backup stays on the server; only this device's copy is removed
+    await ChatCrypto().clear();
   }
 }

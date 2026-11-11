@@ -2018,4 +2018,137 @@ const followListHandler = (direction: "followers" | "following") => async (c: an
 app.get("/api/profile/:target/followers", followListHandler("followers"));
 app.get("/api/profile/:target/following", followListHandler("following"));
 
+// End-to-end encrypted chats: the server keeps each user's public key and their
+// private key encrypted with a chat password only they know. Messages and photos
+// are encrypted on the device, so the server never sees their plaintext.
+let chatKeysTable: Promise<void> | null = null;
+function ensureChatKeysTable(p: Pool): Promise<void> {
+  if (!chatKeysTable) {
+    chatKeysTable = p
+      .query(
+        `CREATE TABLE IF NOT EXISTS public.chat_keys (
+           user_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+           public_key TEXT NOT NULL,
+           encrypted_private_key TEXT NOT NULL,
+           key_nonce TEXT NOT NULL,
+           kdf_salt TEXT NOT NULL,
+           kdf_iterations INTEGER NOT NULL,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+         )`
+      )
+      .then(() => undefined)
+      .catch((err) => {
+        chatKeysTable = null;
+        throw err;
+      });
+  }
+  return chatKeysTable;
+}
+
+// Canonical base64 that decodes to exactly `bytes` bytes
+function isBase64OfLength(value: unknown, bytes: number): value is string {
+  if (typeof value !== "string") return false;
+  const decoded = Buffer.from(value, "base64");
+  return decoded.length === bytes && decoded.toString("base64") === value;
+}
+
+// Own key bundle (only the owner gets the encrypted private key)
+app.get("/api/keys/me", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureChatKeysTable(p);
+    const res = await p.query(
+      `SELECT public_key, encrypted_private_key, key_nonce, kdf_salt, kdf_iterations
+       FROM public.chat_keys WHERE user_id = $1`,
+      [auth.userId]
+    );
+    const row = res.rows[0];
+    return c.json({
+      success: true,
+      keyBundle: row
+        ? {
+            publicKey: row.public_key,
+            encryptedPrivateKey: row.encrypted_private_key,
+            nonce: row.key_nonce,
+            salt: row.kdf_salt,
+            iterations: row.kdf_iterations,
+          }
+        : null,
+    });
+  } catch (err: any) {
+    console.error("Get chat keys error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener las claves" }, 500);
+  }
+});
+
+// Create or replace own key bundle
+app.put("/api/keys/me", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const { publicKey, encryptedPrivateKey, nonce, salt, iterations } = body as Record<string, unknown>;
+    const validIterations =
+      typeof iterations === "number" && Number.isInteger(iterations) && iterations >= 100000 && iterations <= 5000000;
+    if (
+      !isBase64OfLength(publicKey, 32) ||
+      !isBase64OfLength(encryptedPrivateKey, 48) ||
+      !isBase64OfLength(nonce, 12) ||
+      !isBase64OfLength(salt, 16) ||
+      !validIterations
+    ) {
+      return c.json({ success: false, error: "Claves inválidas." }, 400);
+    }
+
+    const p = getPool();
+    await ensureChatKeysTable(p);
+    await p.query(
+      `INSERT INTO public.chat_keys (user_id, public_key, encrypted_private_key, key_nonce, kdf_salt, kdf_iterations)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (user_id) DO UPDATE SET
+         public_key = EXCLUDED.public_key,
+         encrypted_private_key = EXCLUDED.encrypted_private_key,
+         key_nonce = EXCLUDED.key_nonce,
+         kdf_salt = EXCLUDED.kdf_salt,
+         kdf_iterations = EXCLUDED.kdf_iterations,
+         updated_at = now()`,
+      [auth.userId, publicKey, encryptedPrivateKey, nonce, salt, iterations]
+    );
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("Save chat keys error:", err);
+    return c.json({ success: false, error: err.message || "Error al guardar las claves" }, 500);
+  }
+});
+
+// Another user's public key (null when they haven't turned on encryption)
+app.get("/api/keys/:userId", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureChatKeysTable(p);
+    const res = await p.query(
+      "SELECT public_key FROM public.chat_keys WHERE user_id::text = $1",
+      [c.req.param("userId")]
+    );
+    return c.json({ success: true, publicKey: res.rows[0]?.public_key ?? null });
+  } catch (err: any) {
+    console.error("Get public chat key error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener la clave" }, 500);
+  }
+});
+
 export default app;

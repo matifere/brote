@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/chat_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/chat_crypto.dart';
 import 'chat_conversation_screen.dart';
 import 'new_chat_screen.dart';
 
@@ -20,6 +21,9 @@ class _ChatsScreenState extends State<ChatsScreen> {
   bool _isSearching = false;
   bool _isFetching = false;
   Timer? _refreshTimer;
+
+  /// Decrypted last messages, by conversation id and the ciphertext they came from.
+  final Map<String, (String, String)> _previews = {};
 
   @override
   void initState() {
@@ -58,10 +62,38 @@ class _ChatsScreenState extends State<ChatsScreen> {
           }
           _isLoading = false;
         });
+        await _decryptPreviews();
       }
     } finally {
       _isFetching = false;
     }
+  }
+
+  /// The server only has ciphertext for encrypted chats, so their previews are decrypted here.
+  Future<void> _decryptPreviews() async {
+    if (!_chats.any((c) => ChatCipher.isEncrypted(c.lastMessage))) return;
+    if (ChatCrypto().status.value == ChatCryptoStatus.checking) await ChatCrypto().refresh();
+
+    var changed = false;
+    for (final chat in List.of(_chats)) {
+      final other = chat.otherParticipant;
+      if (other == null || !ChatCipher.isEncrypted(chat.lastMessage)) continue;
+      if (_previews[chat.id]?.$1 == chat.lastMessage) continue;
+
+      final key = await ChatCrypto().keyForConversation(chat.id, other.id);
+      final payload = key != null ? await ChatCipher.decryptPayload(chat.lastMessage, key) : null;
+      if (payload != null) {
+        _previews[chat.id] = (chat.lastMessage, payload.preview);
+        changed = true;
+      }
+    }
+    if (changed && mounted) setState(() {});
+  }
+
+  String _previewOf(ChatItem chat) {
+    if (!ChatCipher.isEncrypted(chat.lastMessage)) return chat.lastMessage;
+    final preview = _previews[chat.id];
+    return preview != null && preview.$1 == chat.lastMessage ? preview.$2 : '🔒 Mensaje cifrado';
   }
 
   List<ChatItem> get _filteredChats {
@@ -70,7 +102,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     return _chats.where((c) {
       return c.displayName.toLowerCase().contains(query) ||
           c.username.toLowerCase().contains(query) ||
-          c.lastMessage.toLowerCase().contains(query);
+          _previewOf(c).toLowerCase().contains(query);
     }).toList();
   }
 
@@ -273,8 +305,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
                           children: [
                             Expanded(
                               child: Text(
-                                chat.lastMessage.isNotEmpty
-                                    ? chat.lastMessage
+                                _previewOf(chat).isNotEmpty
+                                    ? _previewOf(chat)
                                     : 'Conversación iniciada',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
