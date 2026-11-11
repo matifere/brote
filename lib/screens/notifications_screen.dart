@@ -45,8 +45,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           conversationId: notification.conversationId!,
           otherParticipant: notification.actor,
         ),
-      // Liked posts are on your own profile
-      NotificationKind.like when AuthService().currentUser != null =>
+      // Liked and commented posts are on your own profile
+      NotificationKind.like || NotificationKind.comment when AuthService().currentUser != null =>
         ProfileScreen(profile: AuthService().currentUser!),
       _ => ProfileScreen(profile: notification.actor),
     };
@@ -129,6 +129,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
     final (IconData kindIcon, Color kindColor) = switch (notification.kind) {
       NotificationKind.like => (Icons.favorite_rounded, Colors.redAccent),
+      NotificationKind.comment => (Icons.mode_comment_rounded, colorScheme.primary),
       NotificationKind.follow || NotificationKind.followAccepted => (Icons.person_add_alt_1_rounded, colorScheme.primary),
       NotificationKind.followRequest => (Icons.group_add_rounded, colorScheme.tertiary),
       NotificationKind.message => (Icons.chat_bubble_rounded, colorScheme.primary),

@@ -4,6 +4,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../models/post_item.dart';
 import '../models/rating.dart';
 import '../models/user_profile.dart';
+import '../screens/post_comments_screen.dart';
 import '../screens/profile_screen.dart';
 import '../services/auth_service.dart';
 import '../services/catalog_service.dart';
@@ -14,10 +15,14 @@ class PostCard extends StatefulWidget {
   final PostItem post;
   final VoidCallback? onAuthorTap;
 
+  /// False inside the comments screen, where the comments are already shown.
+  final bool showCommentsButton;
+
   const PostCard({
     super.key,
     required this.post,
     this.onAuthorTap,
+    this.showCommentsButton = true,
   });
 
   @override
@@ -27,6 +32,7 @@ class PostCard extends StatefulWidget {
 class _PostCardState extends State<PostCard> {
   late bool _isLiked;
   late int _likesCount;
+  late int _commentsCount;
   bool _isLikeLoading = false;
   String? _moviePosterUrl;
 
@@ -35,6 +41,7 @@ class _PostCardState extends State<PostCard> {
     super.initState();
     _isLiked = widget.post.isLiked;
     _likesCount = widget.post.likesCount;
+    _commentsCount = widget.post.commentsCount;
     _loadPosterIfNeeded();
   }
 
@@ -46,8 +53,47 @@ class _PostCardState extends State<PostCard> {
     if (!identical(oldWidget.post, widget.post) && !_isLikeLoading) {
       _isLiked = widget.post.isLiked;
       _likesCount = widget.post.likesCount;
+      _commentsCount = widget.post.commentsCount;
       _loadPosterIfNeeded();
     }
+  }
+
+  bool get _isOwnPost => AuthService().currentUser?.id == widget.post.authorId;
+
+  Future<void> _openComments() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => PostCommentsScreen(post: widget.post)),
+    );
+    // The comments screen keeps the post's count up to date
+    if (mounted) setState(() => _commentsCount = widget.post.commentsCount);
+  }
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Borrar publicación'),
+        content: const Text('Se borra para siempre, con sus me gusta y comentarios.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Borrar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final deleted = await AuthService().deletePost(widget.post.id);
+    messenger.showSnackBar(
+      SnackBar(content: Text(deleted ? 'Publicación borrada' : 'No se pudo borrar la publicación')),
+    );
   }
 
   void _loadPosterIfNeeded() {
@@ -175,53 +221,74 @@ class _PostCardState extends State<PostCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header (Name, username, time ago)
-                GestureDetector(
-                  onTap: _navigateToAuthorProfile,
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          authorName,
-                          style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (widget.post.isVerified) ...[
-                        const SizedBox(width: 4),
-                        Icon(Icons.verified_rounded, size: 14, color: colorScheme.primary),
-                      ],
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          '@$authorUsername',
-                          style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '· ${widget.post.timeAgo}',
-                        style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                      ),
-                      if (timeLeft != null) ...[
-                        const SizedBox(width: 6),
-                        Icon(Icons.timelapse_rounded, size: 13, color: colorScheme.tertiary),
-                        const SizedBox(width: 2),
-                        Flexible(
-                          child: Tooltip(
-                            message: 'Publicación de 24 h',
-                            child: Text(
-                              timeLeft,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: textTheme.bodySmall?.copyWith(color: colorScheme.tertiary),
+                // Header (Name, username, time ago) and, on your posts, a menu
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: _navigateToAuthorProfile,
+                        child: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                authorName,
+                                style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
+                            if (widget.post.isVerified) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.verified_rounded, size: 14, color: colorScheme.primary),
+                            ],
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                '@$authorUsername',
+                                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              '· ${widget.post.timeAgo}',
+                              style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                            ),
+                            if (timeLeft != null) ...[
+                              const SizedBox(width: 6),
+                              Icon(Icons.timelapse_rounded, size: 13, color: colorScheme.tertiary),
+                              const SizedBox(width: 2),
+                              Flexible(
+                                child: Tooltip(
+                                  message: 'Publicación de 24 h',
+                                  child: Text(
+                                    timeLeft,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: textTheme.bodySmall?.copyWith(color: colorScheme.tertiary),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                      ],
-                    ],
-                  ),
+                      ),
+                    ),
+                    if (_isOwnPost)
+                      SizedBox(
+                        width: 28,
+                        height: 24,
+                        child: PopupMenuButton<String>(
+                          tooltip: 'Opciones',
+                          padding: EdgeInsets.zero,
+                          iconSize: 18,
+                          icon: Icon(Icons.more_horiz_rounded, color: colorScheme.onSurfaceVariant),
+                          onSelected: (_) => _confirmDelete(),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'delete', child: Text('Borrar publicación')),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 8),
 
@@ -313,7 +380,7 @@ class _PostCardState extends State<PostCard> {
 
                 const SizedBox(height: 14),
 
-                // Interactive Actions Row (Like, Comments, Repost, Share)
+                // Interactive Actions Row (Like, Comments, Share)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -346,54 +413,26 @@ class _PostCardState extends State<PostCard> {
                     ),
 
                     // Comments button
-                    InkWell(
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Comentarios próximamente.')),
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.chat_bubble_outline_rounded,
-                                size: 17, color: colorScheme.onSurfaceVariant),
-                            const SizedBox(width: 5),
-                            Text(
-                              '${widget.post.commentsCount}',
-                              style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
-                            ),
-                          ],
+                    if (widget.showCommentsButton)
+                      InkWell(
+                        onTap: _openComments,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.chat_bubble_outline_rounded,
+                                  size: 17, color: colorScheme.onSurfaceVariant),
+                              const SizedBox(width: 5),
+                              Text(
+                                '$_commentsCount',
+                                style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-
-                    // Repost button
-                    InkWell(
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Republicar próximamente.')),
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.repeat_rounded,
-                                size: 18, color: colorScheme.onSurfaceVariant),
-                            const SizedBox(width: 5),
-                            Text(
-                              '${widget.post.repostsCount}',
-                              style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
 
                     // Share button
                     IconButton(

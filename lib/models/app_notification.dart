@@ -1,7 +1,7 @@
 import 'post_content.dart';
 import 'user_profile.dart';
 
-enum NotificationKind { like, follow, followRequest, followAccepted, message, unknown }
+enum NotificationKind { like, comment, follow, followRequest, followAccepted, message, unknown }
 
 /// Something that happened to the user: a like, a new follower, a message...
 class AppNotification {
@@ -27,6 +27,7 @@ class AppNotification {
 
   static NotificationKind _kindOf(String? type) => switch (type) {
         'like' => NotificationKind.like,
+        'comment' => NotificationKind.comment,
         'follow' => NotificationKind.follow,
         'follow_request' => NotificationKind.followRequest,
         'follow_accepted' => NotificationKind.followAccepted,
@@ -57,6 +58,7 @@ class AppNotification {
   /// What happened, after the actor's name.
   String get message => switch (kind) {
         NotificationKind.like => 'le dio me gusta a tu publicación',
+        NotificationKind.comment => 'comentó tu publicación',
         NotificationKind.follow => 'empezó a seguirte',
         NotificationKind.followRequest => 'quiere seguirte',
         NotificationKind.followAccepted => 'aceptó tu solicitud de seguimiento',
