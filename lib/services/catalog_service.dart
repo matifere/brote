@@ -43,9 +43,11 @@ class CatalogService {
   static const String _wikidataEndpoint = 'https://www.wikidata.org/w/api.php';
   static const String _itunesEndpoint = 'https://itunes.apple.com/search';
 
-  /// Restricts results to films: feature, animated feature, animated, documentary and short films.
+  /// Restricts results to films (feature, animated feature, animated, documentary and short films)
+  /// and TV series (series, animated series, miniseries and anime series).
   static const String _filmFilter =
-      'haswbstatement:P31=Q11424|P31=Q29168811|P31=Q202866|P31=Q93204|P31=Q24869';
+      'haswbstatement:P31=Q11424|P31=Q29168811|P31=Q202866|P31=Q93204|P31=Q24869'
+      '|P31=Q5398426|P31=Q581714|P31=Q1259759|P31=Q63952888';
 
   static final RegExp _yearPattern = RegExp(r'\b(1[89]\d{2}|20\d{2})\b');
 

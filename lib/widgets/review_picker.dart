@@ -156,7 +156,7 @@ class _ReviewItemPickerScreenState extends State<ReviewItemPickerScreen> {
               autofocus: true,
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
-                hintText: isMovie ? 'Buscar una película...' : 'Buscar un tema, álbum o artista...',
+                hintText: isMovie ? 'Buscar una película o serie...' : 'Buscar un tema, álbum o artista...',
                 prefixIcon: Icon(
                   isMovie ? Icons.movie_outlined : Icons.music_note_outlined,
                   color: colorScheme.primary,

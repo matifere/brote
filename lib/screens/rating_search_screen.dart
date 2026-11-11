@@ -33,13 +33,13 @@ class _CategoryCopy {
   static _CategoryCopy of(RatingCategory category) => switch (category) {
         RatingCategory.movie => const _CategoryCopy(
             title: 'Películas',
-            hint: 'Buscar una película...',
+            hint: 'Buscar una película o serie...',
             icon: Icons.movie_outlined,
-            searching: 'Buscando películas...',
-            emptyTitle: 'Calificá tus películas',
+            searching: 'Buscando películas y series...',
+            emptyTitle: 'Calificá tus películas y series',
             emptyBody:
-                'Buscá una película, ponele de 1 a 5 estrellas y va a aparecer en la descripción de tu perfil. Si le sumás una opinión, se publica en el feed.',
-            noResultsTitle: 'No encontramos películas',
+                'Buscá una película o serie, ponele de 1 a 5 estrellas y va a aparecer en la descripción de tu perfil. Si le sumás una opinión, se publica en el feed.',
+            noResultsTitle: 'No encontramos películas ni series',
             noResultsBody: 'Probá con el título original o con otra forma de escribirlo.',
             source: 'Datos de Wikidata',
           ),
