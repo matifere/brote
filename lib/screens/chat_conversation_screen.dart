@@ -159,17 +159,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     if (changed && mounted) setState(() {});
   }
 
-  Future<void> _setUpEncryption() async {
-    final user = AuthService().currentUser;
-    if (user != null) {
-      await _runCryptoAction(() => ChatCrypto().createKeys(ChatCrypto.vaultKeyFor(user.id)));
-      return;
-    }
-    final result = await showChatPasswordDialog(context, mode: ChatPasswordMode.create);
-    if (result?.password == null || !mounted) return;
-    await _runCryptoAction(() => ChatCrypto().createKeys(result!.password!));
-  }
-
   Future<void> _unlockEncryption() async {
     final result = await showChatPasswordDialog(context, mode: ChatPasswordMode.unlock);
     if (result == null || !mounted) return;
@@ -226,14 +215,26 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _messageController.clear();
     setState(() => _isSending = true);
 
-    // With a shared key, the text (and any encrypted photo's key) only leaves the device encrypted
-    final key = _conversationKey;
-    SecureChatPayload? payload;
-    String? content = text.isNotEmpty ? text : null;
-    if (key != null && (text.isNotEmpty || secureImage != null)) {
-      payload = SecureChatPayload(text: text, image: secureImage);
-      content = await ChatCipher.encryptPayload(payload, key);
+    // Ensure conversation key is ready; messages are strictly end-to-end encrypted
+    var key = _conversationKey;
+    if (key == null) {
+      key = await ChatCrypto().keyForConversation(widget.conversationId, _otherParticipant.id);
+      if (key != null) _conversationKey = key;
     }
+
+    if (key == null) {
+      _messageController.text = text;
+      setState(() => _isSending = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Estableciendo conexión cifrada... Reintentá en un instante.')),
+        );
+      }
+      return;
+    }
+
+    final payload = SecureChatPayload(text: text, image: secureImage);
+    final content = await ChatCipher.encryptPayload(payload, key);
 
     final res = await AuthService().sendMessage(
       widget.conversationId,
@@ -248,7 +249,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
     if (res['success'] == true && res['message'] != null) {
       final sent = res['message'] as ChatMessage;
-      if (payload != null) _decrypted[sent.id] = payload;
+      _decrypted[sent.id] = payload;
       setState(() {
         // A poll may have already picked this message up while the send was in flight.
         if (!_messages.any((m) => m.id == sent.id)) {
@@ -314,20 +315,16 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         );
 
-        // In encrypted chats only ciphertext is uploaded, since media URLs are public
-        final key = _conversationKey;
-        final (uploadBytes, imageKey) =
-            key != null ? await ChatCipher.encryptImage(bytes) : (bytes, null);
+        // Photos are always end-to-end encrypted before upload
+        final (uploadBytes, imageKey) = await ChatCipher.encryptImage(bytes);
         final imageUrl = await AuthService().uploadChatImage(
           uploadBytes,
-          filename: imageKey != null ? 'foto.enc' : picked.name,
+          filename: 'foto.enc',
         );
 
-        if (imageUrl != null && imageKey != null) {
+        if (imageUrl != null) {
           _secureImages[imageUrl] = Future.value(bytes);
           await _handleSendMessage(secureImage: SecureChatImage(url: imageUrl, key: imageKey));
-        } else if (imageUrl != null) {
-          await _handleSendMessage(mediaUrl: imageUrl);
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -546,27 +543,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     final username = _otherParticipant.username;
     final isEncrypted = _conversationKey != null;
     final (IconData icon, String message, String? actionLabel, VoidCallback? action) = switch (status) {
-      ChatCryptoStatus.needsSetup => (
-          Icons.lock_outline_rounded,
-          'Activá el cifrado de punta a punta para que solo vos y @$username puedan leer los mensajes.',
-          'Activar',
-          _setUpEncryption,
-        ),
       ChatCryptoStatus.locked => (
           Icons.lock_outline_rounded,
           'Ingresá la contraseña de tu cuenta para leer y enviar mensajes cifrados.',
           'Desbloquear',
           _unlockEncryption,
         ),
-      ChatCryptoStatus.ready when isEncrypted => (
+      ChatCryptoStatus.ready => (
           Icons.lock_rounded,
           'Cifrado de punta a punta: solo vos y @$username pueden leer estos mensajes y fotos.',
-          null,
-          null,
-        ),
-      ChatCryptoStatus.ready => (
-          Icons.lock_open_rounded,
-          '@$username todavía no activó el cifrado: los mensajes se envían sin cifrar.',
           null,
           null,
         ),

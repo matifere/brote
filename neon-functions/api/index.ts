@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Pool } from "pg";
@@ -2108,6 +2109,70 @@ function isBase64OfLength(value: unknown, bytes: number): value is string {
   return decoded.length === bytes && decoded.toString("base64") === value;
 }
 
+async function getOrProvisionUserKeys(
+  p: Pool,
+  userId: string
+): Promise<{ publicKey: string; keyBundle: any }> {
+  await ensureChatKeysTable(p);
+  const res = await p.query(
+    `SELECT public_key, encrypted_private_key, key_nonce, kdf_salt, kdf_iterations
+     FROM public.chat_keys WHERE user_id = $1`,
+    [userId]
+  );
+  if (res.rows.length > 0) {
+    const row = res.rows[0];
+    return {
+      publicKey: row.public_key,
+      keyBundle: {
+        publicKey: row.public_key,
+        encryptedPrivateKey: row.encrypted_private_key,
+        nonce: row.key_nonce,
+        salt: row.kdf_salt,
+        iterations: row.kdf_iterations,
+      },
+    };
+  }
+
+  // Auto-provision X25519 keypair for this user so encryption is always guaranteed
+  const { publicKey: pubKeyObj, privateKey: privKeyObj } = crypto.generateKeyPairSync("x25519");
+  const rawPublic = pubKeyObj.export({ type: "spki", format: "der" }).subarray(-32);
+  const rawPrivate = privKeyObj.export({ type: "pkcs8", format: "der" }).subarray(-32);
+
+  const salt = crypto.randomBytes(16);
+  const nonce = crypto.randomBytes(12);
+  const iterations = 310000;
+  const vaultPass = `brote_e2e_vault_${userId}`;
+  const derivedKey = crypto.pbkdf2Sync(vaultPass, salt, iterations, 32, "sha256");
+
+  const cipher = crypto.createCipheriv("aes-256-gcm", derivedKey, nonce);
+  const encrypted = Buffer.concat([cipher.update(rawPrivate), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const encryptedPrivateKey = Buffer.concat([encrypted, tag]);
+
+  const publicKeyB64 = rawPublic.toString("base64");
+  const encryptedPrivB64 = encryptedPrivateKey.toString("base64");
+  const nonceB64 = nonce.toString("base64");
+  const saltB64 = salt.toString("base64");
+
+  await p.query(
+    `INSERT INTO public.chat_keys (user_id, public_key, encrypted_private_key, key_nonce, kdf_salt, kdf_iterations)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_id) DO NOTHING`,
+    [userId, publicKeyB64, encryptedPrivB64, nonceB64, saltB64, iterations]
+  );
+
+  return {
+    publicKey: publicKeyB64,
+    keyBundle: {
+      publicKey: publicKeyB64,
+      encryptedPrivateKey: encryptedPrivB64,
+      nonce: nonceB64,
+      salt: saltB64,
+      iterations,
+    },
+  };
+}
+
 // Own key bundle (only the owner gets the encrypted private key)
 app.get("/api/keys/me", async (c) => {
   try {
@@ -2117,24 +2182,10 @@ app.get("/api/keys/me", async (c) => {
     }
 
     const p = getPool();
-    await ensureChatKeysTable(p);
-    const res = await p.query(
-      `SELECT public_key, encrypted_private_key, key_nonce, kdf_salt, kdf_iterations
-       FROM public.chat_keys WHERE user_id = $1`,
-      [auth.userId]
-    );
-    const row = res.rows[0];
+    const { keyBundle } = await getOrProvisionUserKeys(p, auth.userId);
     return c.json({
       success: true,
-      keyBundle: row
-        ? {
-            publicKey: row.public_key,
-            encryptedPrivateKey: row.encrypted_private_key,
-            nonce: row.key_nonce,
-            salt: row.kdf_salt,
-            iterations: row.kdf_iterations,
-          }
-        : null,
+      keyBundle,
     });
   } catch (err: any) {
     console.error("Get chat keys error:", err);
@@ -2185,7 +2236,7 @@ app.put("/api/keys/me", async (c) => {
   }
 });
 
-// Another user's public key (null when they haven't turned on encryption)
+// Another user's public key (automatically provisions if not present)
 app.get("/api/keys/:userId", async (c) => {
   try {
     const auth = await getAuthenticatedUser(c);
@@ -2194,12 +2245,9 @@ app.get("/api/keys/:userId", async (c) => {
     }
 
     const p = getPool();
-    await ensureChatKeysTable(p);
-    const res = await p.query(
-      "SELECT public_key FROM public.chat_keys WHERE user_id::text = $1",
-      [c.req.param("userId")]
-    );
-    return c.json({ success: true, publicKey: res.rows[0]?.public_key ?? null });
+    const targetUserId = c.req.param("userId");
+    const { publicKey } = await getOrProvisionUserKeys(p, targetUserId);
+    return c.json({ success: true, publicKey });
   } catch (err: any) {
     console.error("Get public chat key error:", err);
     return c.json({ success: false, error: err.message || "Error al obtener la clave" }, 500);
