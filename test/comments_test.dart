@@ -160,4 +160,103 @@ void main() {
       expect(find.byTooltip('Opciones'), findsNothing);
     });
   });
+
+  testWidgets('threads replies under parent comments and sends parentId when replying', (tester) async {
+    String? receivedParentId;
+    final server = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/api/auth/me') return _json({'success': true, 'token': 'tok', 'user': _me, 'profile': _me});
+      if (path == '/api/posts/post-1/comments' && request.method == 'GET') {
+        return _json({
+          'success': true,
+          'comments': [_comment('c1', 'other-2', 'Carla', 'Buenisimo esto')],
+        });
+      }
+      if (path == '/api/posts/post-1/comments' && request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        receivedParentId = body['parentId'] as String?;
+        final text = body['content'] as String;
+        final reply = _comment('c2', 'me-1', 'Ana', text);
+        reply['parentId'] = receivedParentId;
+        reply['replyToUsername'] = 'carla';
+        return _json({'success': true, 'comment': reply, 'commentsCount': 2});
+      }
+      return http.Response('404 Not Found', 404);
+    });
+
+    await run(tester, server, () async {
+      await tester.pumpWidget(MaterialApp(home: PostCommentsScreen(post: _post())));
+      await settle(tester);
+
+      expect(find.text('Buenisimo esto'), findsOneWidget);
+      expect(find.text('Responder'), findsOneWidget);
+
+      // Tap Responder
+      await tester.tap(find.text('Responder'));
+      await settle(tester);
+
+      expect(find.text('Respondiendo a @carla'), findsOneWidget);
+
+      // Enter reply text and send
+      await tester.enterText(find.byType(TextField), 'Coincido Carla');
+      await tester.tap(find.byTooltip('Comentar'));
+      await settle(tester);
+
+      expect(receivedParentId, 'c1');
+      expect(find.text('Coincido Carla'), findsOneWidget);
+      expect(find.text('Respondiendo a @carla'), findsOneWidget);
+    });
+  });
+
+  testWidgets('likes and unlikes comments with instant toggle', (tester) async {
+    int likeCalls = 0;
+    final server = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/api/auth/me') return _json({'success': true, 'token': 'tok', 'user': _me, 'profile': _me});
+      if (path == '/api/posts/post-1/comments' && request.method == 'GET') {
+        return _json({
+          'success': true,
+          'comments': [
+            {
+              ..._comment('c1', 'other-2', 'Carla', 'Genial'),
+              'likesCount': 0,
+              'isLiked': false,
+            }
+          ],
+        });
+      }
+      if (path == '/api/posts/post-1/comments/c1/like' && request.method == 'POST') {
+        likeCalls++;
+        return _json({'success': true, 'isLiked': likeCalls % 2 == 1, 'likesCount': likeCalls % 2 == 1 ? 1 : 0});
+      }
+      return http.Response('404 Not Found', 404);
+    });
+
+    await run(tester, server, () async {
+      await tester.pumpWidget(MaterialApp(home: PostCommentsScreen(post: _post())));
+      await settle(tester);
+
+      expect(find.text('Genial'), findsOneWidget);
+      // PostCard has its own like button, so comment like button is the last
+      final commentLikeButton = find.byIcon(Icons.favorite_border_rounded).last;
+      expect(commentLikeButton, findsOneWidget);
+      expect(find.text('1'), findsNothing);
+
+      // Tap heart to like
+      await tester.tap(commentLikeButton);
+      await settle(tester);
+
+      expect(likeCalls, 1);
+      expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
+
+      // Tap heart again to unlike
+      await tester.tap(find.byIcon(Icons.favorite_rounded));
+      await settle(tester);
+
+      expect(likeCalls, 2);
+      expect(find.byIcon(Icons.favorite_rounded), findsNothing);
+      expect(find.text('1'), findsNothing);
+    });
+  });
 }

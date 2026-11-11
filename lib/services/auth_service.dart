@@ -401,23 +401,28 @@ class AuthService {
     return null;
   }
 
-  /// Adds a comment; returns it with the post's new comment count, or an error message.
+  /// Adds a comment or reply; returns it with the post's new comment count, or an error message.
   Future<({PostComment? comment, int? commentsCount, String? error})> addComment(
     String postId,
-    String content,
-  ) async {
+    String content, {
+    String? parentId,
+  }) async {
     final token = _sessionToken;
     if (token == null) return (comment: null, commentsCount: null, error: 'Sesión no iniciada');
 
     try {
       final uri = Uri.parse('$baseUrl/api/posts/$postId/comments');
+      final payload = <String, dynamic>{
+        'content': content.trim(),
+        if (parentId != null && parentId.isNotEmpty) 'parentId': parentId,
+      };
       final response = await http.post(
         uri,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({'content': content.trim()}),
+        body: jsonEncode(payload),
       ).timeout(const Duration(seconds: 12));
 
       final data = jsonDecode(response.body);
@@ -432,6 +437,45 @@ class AuthService {
     } catch (e) {
       debugPrint('Error adding comment: $e');
       return (comment: null, commentsCount: null, error: 'No se pudo comentar. Revisá tu conexión.');
+    }
+  }
+
+  /// Toggles like on a comment. Returns whether it's liked and the new like count.
+  Future<({bool success, bool isLiked, int likesCount, String? error})> toggleCommentLike(
+    String postId,
+    String commentId,
+  ) async {
+    final token = _sessionToken;
+    if (token == null) return (success: false, isLiked: false, likesCount: 0, error: 'Sesión no iniciada');
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/$postId/comments/$commentId/like');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        return (
+          success: true,
+          isLiked: data['isLiked'] == true,
+          likesCount: (data['likesCount'] as num?)?.toInt() ?? 0,
+          error: null,
+        );
+      }
+      return (
+        success: false,
+        isLiked: false,
+        likesCount: 0,
+        error: data['error'] as String? ?? 'No se pudo actualizar el me gusta',
+      );
+    } catch (e) {
+      debugPrint('Error toggling comment like: $e');
+      return (success: false, isLiked: false, likesCount: 0, error: 'Error de conexión');
     }
   }
 

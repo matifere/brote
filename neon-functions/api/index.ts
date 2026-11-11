@@ -2272,7 +2272,7 @@ app.get("/api/keys/:userId", async (c) => {
   }
 });
 
-// Comments on posts (public.post_comments from the initial migration)
+// Comments on posts (public.post_comments and thread replies + likes)
 let postCommentsTable: Promise<void> | null = null;
 function ensurePostCommentsTable(p: Pool): Promise<void> {
   if (!postCommentsTable) {
@@ -2285,7 +2285,19 @@ function ensurePostCommentsTable(p: Pool): Promise<void> {
            content TEXT NOT NULL,
            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
          );
-         CREATE INDEX IF NOT EXISTS idx_post_comments_post_id ON public.post_comments (post_id, created_at ASC);`
+         ALTER TABLE public.post_comments ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES public.post_comments(id) ON DELETE CASCADE;
+         ALTER TABLE public.post_comments ADD COLUMN IF NOT EXISTS likes_count INTEGER NOT NULL DEFAULT 0;
+         CREATE INDEX IF NOT EXISTS idx_post_comments_post_id ON public.post_comments (post_id, created_at ASC);
+         CREATE INDEX IF NOT EXISTS idx_post_comments_parent_id ON public.post_comments (parent_id);
+
+         CREATE TABLE IF NOT EXISTS public.post_comment_likes (
+           comment_id UUID NOT NULL REFERENCES public.post_comments(id) ON DELETE CASCADE,
+           user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+           PRIMARY KEY (comment_id, user_id)
+         );
+         CREATE INDEX IF NOT EXISTS idx_comment_likes_comment_id ON public.post_comment_likes (comment_id);
+         CREATE INDEX IF NOT EXISTS idx_comment_likes_user_id ON public.post_comment_likes (user_id);`
       )
       .then(() => undefined)
       .catch((err) => {
@@ -2317,8 +2329,12 @@ function mapCommentRow(row: any) {
   return {
     id: row.id,
     postId: row.post_id,
+    parentId: row.parent_id || null,
     content: row.content,
     createdAt: row.created_at,
+    likesCount: Number(row.likes_count || 0),
+    isLiked: Boolean(row.is_liked),
+    replyToUsername: row.reply_to_username || null,
     author: {
       id: row.author_id,
       username: row.username,
@@ -2343,13 +2359,22 @@ app.get("/api/posts/:id/comments", async (c) => {
     }
 
     const res = await p.query(
-      `SELECT cm.id, cm.post_id, cm.content, cm.created_at, cm.author_id, pr.username, pr.display_name, pr.avatar_url
+      `SELECT cm.id, cm.post_id, cm.parent_id, cm.content, cm.created_at, cm.author_id,
+              COALESCE(cm.likes_count, 0) AS likes_count,
+              pr.username, pr.display_name, pr.avatar_url,
+              parent_pr.username AS reply_to_username,
+              EXISTS(
+                SELECT 1 FROM public.post_comment_likes cl
+                WHERE cl.comment_id = cm.id AND cl.user_id = $2::uuid
+              ) AS is_liked
        FROM public.post_comments cm
        INNER JOIN public.profiles pr ON pr.id = cm.author_id
+       LEFT JOIN public.post_comments parent_cm ON parent_cm.id = cm.parent_id
+       LEFT JOIN public.profiles parent_pr ON parent_pr.id = parent_cm.author_id
        WHERE cm.post_id = $1
        ORDER BY cm.created_at ASC
-       LIMIT 200`,
-      [postId]
+       LIMIT 300`,
+      [postId, auth.userId]
     );
     return c.json({ success: true, comments: res.rows.map(mapCommentRow) });
   } catch (err: any) {
@@ -2367,6 +2392,9 @@ app.post("/api/posts/:id/comments", async (c) => {
 
     const body = await c.req.json().catch(() => ({}));
     const content = typeof body.content === "string" ? body.content.trim() : "";
+    const parentId =
+      typeof body.parentId === "string" && body.parentId.trim().length > 0 ? body.parentId.trim() : null;
+
     if (!content) {
       return c.json({ success: false, error: "El comentario no puede estar vacío." }, 400);
     }
@@ -2377,27 +2405,51 @@ app.post("/api/posts/:id/comments", async (c) => {
     const postId = c.req.param("id");
     const p = getPool();
     await ensurePostCommentsTable(p);
-    const authorId = await visiblePostAuthor(p, postId, auth.userId);
-    if (!authorId) {
+    const postAuthorId = await visiblePostAuthor(p, postId, auth.userId);
+    if (!postAuthorId) {
       return c.json({ success: false, error: "Publicación no encontrada" }, 404);
     }
 
+    let parentAuthorId: string | null = null;
+    if (parentId) {
+      const parentRes = await p.query(
+        "SELECT id, author_id FROM public.post_comments WHERE id = $1 AND post_id = $2",
+        [parentId, postId]
+      );
+      if (parentRes.rows.length === 0) {
+        return c.json({ success: false, error: "Comentario original no encontrado" }, 400);
+      }
+      parentAuthorId = parentRes.rows[0].author_id;
+    }
+
     const inserted = await p.query(
-      `INSERT INTO public.post_comments (post_id, author_id, content)
-       VALUES ($1, $2, $3)
+      `INSERT INTO public.post_comments (post_id, author_id, content, parent_id)
+       VALUES ($1, $2, $3, $4)
        RETURNING id`,
-      [postId, auth.userId, content]
+      [postId, auth.userId, content, parentId]
     );
     const countRes = await p.query(
       "UPDATE public.posts SET comments_count = comments_count + 1 WHERE id = $1 RETURNING comments_count",
       [postId]
     );
-    await notify(p, { recipientId: authorId, actorId: auth.userId, type: "comment", postId });
+
+    if (parentAuthorId && parentAuthorId !== auth.userId) {
+      await notify(p, { recipientId: parentAuthorId, actorId: auth.userId, type: "comment", postId });
+    }
+    if (postAuthorId !== auth.userId && postAuthorId !== parentAuthorId) {
+      await notify(p, { recipientId: postAuthorId, actorId: auth.userId, type: "comment", postId });
+    }
 
     const commentRes = await p.query(
-      `SELECT cm.id, cm.post_id, cm.content, cm.created_at, cm.author_id, pr.username, pr.display_name, pr.avatar_url
+      `SELECT cm.id, cm.post_id, cm.parent_id, cm.content, cm.created_at, cm.author_id,
+              COALESCE(cm.likes_count, 0) AS likes_count,
+              pr.username, pr.display_name, pr.avatar_url,
+              parent_pr.username AS reply_to_username,
+              FALSE AS is_liked
        FROM public.post_comments cm
        INNER JOIN public.profiles pr ON pr.id = cm.author_id
+       LEFT JOIN public.post_comments parent_cm ON parent_cm.id = cm.parent_id
+       LEFT JOIN public.profiles parent_pr ON parent_pr.id = parent_cm.author_id
        WHERE cm.id = $1`,
       [inserted.rows[0].id]
     );
@@ -2412,7 +2464,80 @@ app.post("/api/posts/:id/comments", async (c) => {
   }
 });
 
-// The comment's author or the post's author can delete a comment
+// Like / unlike a comment
+app.post("/api/posts/:id/comments/:commentId/like", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const postId = c.req.param("id");
+    const commentId = c.req.param("commentId");
+    const p = getPool();
+    await ensurePostCommentsTable(p);
+
+    if (!(await visiblePostAuthor(p, postId, auth.userId))) {
+      return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+
+    const commentRes = await p.query(
+      "SELECT id, author_id, likes_count FROM public.post_comments WHERE id = $1 AND post_id = $2",
+      [commentId, postId]
+    );
+    if (commentRes.rows.length === 0) {
+      return c.json({ success: false, error: "Comentario no encontrado" }, 404);
+    }
+    const commentRow = commentRes.rows[0];
+
+    const existingLike = await p.query(
+      "SELECT 1 FROM public.post_comment_likes WHERE comment_id = $1 AND user_id = $2",
+      [commentId, auth.userId]
+    );
+
+    let isLiked = false;
+    let newLikesCount = Number(commentRow.likes_count || 0);
+
+    if (existingLike.rows.length > 0) {
+      await p.query(
+        "DELETE FROM public.post_comment_likes WHERE comment_id = $1 AND user_id = $2",
+        [commentId, auth.userId]
+      );
+      const updateRes = await p.query(
+        "UPDATE public.post_comments SET likes_count = GREATEST(0, likes_count - 1) WHERE id = $1 RETURNING likes_count",
+        [commentId]
+      );
+      isLiked = false;
+      newLikesCount = updateRes.rows[0]?.likes_count ?? Math.max(0, newLikesCount - 1);
+    } else {
+      await p.query(
+        "INSERT INTO public.post_comment_likes (comment_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [commentId, auth.userId]
+      );
+      const updateRes = await p.query(
+        "UPDATE public.post_comments SET likes_count = likes_count + 1 WHERE id = $1 RETURNING likes_count",
+        [commentId]
+      );
+      isLiked = true;
+      newLikesCount = updateRes.rows[0]?.likes_count ?? (newLikesCount + 1);
+
+      if (commentRow.author_id !== auth.userId) {
+        await notify(p, { recipientId: commentRow.author_id, actorId: auth.userId, type: "like", postId });
+      }
+    }
+
+    return c.json({
+      success: true,
+      isLiked,
+      likesCount: newLikesCount,
+    });
+  } catch (err: any) {
+    console.error("Comment like error:", err);
+    return c.json({ success: false, error: err.message || "Error al dar me gusta al comentario" }, 500);
+  }
+});
+
+// The comment's author or the post's author can delete a comment (and its child replies)
 app.delete("/api/posts/:id/comments/:commentId", async (c) => {
   try {
     const auth = await getAuthenticatedUser(c);
@@ -2421,23 +2546,42 @@ app.delete("/api/posts/:id/comments/:commentId", async (c) => {
     }
 
     const postId = c.req.param("id");
+    const commentId = c.req.param("commentId");
     const p = getPool();
     await ensurePostCommentsTable(p);
-    const res = await p.query(
-      `DELETE FROM public.post_comments cm
-       USING public.posts po
-       WHERE cm.id::text = $1 AND cm.post_id::text = $2 AND po.id = cm.post_id
-         AND (cm.author_id = $3 OR po.author_id = $3)
-       RETURNING cm.post_id`,
-      [c.req.param("commentId"), postId, auth.userId]
+
+    const checkRes = await p.query(
+      `SELECT cm.id, cm.author_id, po.author_id AS post_author_id
+       FROM public.post_comments cm
+       INNER JOIN public.posts po ON po.id = cm.post_id
+       WHERE cm.id::text = $1 AND cm.post_id::text = $2`,
+      [commentId, postId]
     );
-    if (res.rows.length === 0) {
+    if (checkRes.rows.length === 0) {
       return c.json({ success: false, error: "Comentario no encontrado" }, 404);
     }
+    const row = checkRes.rows[0];
+    if (row.author_id !== auth.userId && row.post_author_id !== auth.userId) {
+      return c.json({ success: false, error: "No tenés permiso para borrar este comentario" }, 403);
+    }
+
+    // Count how many comments in this subtree will be removed
+    const countSubtree = await p.query(
+      `WITH RECURSIVE tree AS (
+         SELECT id FROM public.post_comments WHERE id::text = $1
+         UNION ALL
+         SELECT c.id FROM public.post_comments c INNER JOIN tree t ON c.parent_id = t.id
+       )
+       SELECT count(*)::int AS count FROM tree`,
+      [commentId]
+    );
+    const toDeleteCount = countSubtree.rows[0]?.count ?? 1;
+
+    await p.query("DELETE FROM public.post_comments WHERE id::text = $1", [commentId]);
 
     const countRes = await p.query(
-      "UPDATE public.posts SET comments_count = GREATEST(0, comments_count - 1) WHERE id = $1 RETURNING comments_count",
-      [res.rows[0].post_id]
+      "UPDATE public.posts SET comments_count = GREATEST(0, comments_count - $1) WHERE id = $2 RETURNING comments_count",
+      [toDeleteCount, postId]
     );
     return c.json({ success: true, commentsCount: countRes.rows[0]?.comments_count ?? 0 });
   } catch (err: any) {
