@@ -3,11 +3,14 @@ import 'models/user_profile.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_navigation_screen.dart';
 import 'services/auth_service.dart';
+import 'services/theme_service.dart';
 import 'theme/brote_theme.dart';
 import 'widgets/brote_logo.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Restore the saved light/dark choice before the first frame to avoid a flash
+  await ThemeService().load();
   runApp(const BroteApp());
 }
 
@@ -16,13 +19,16 @@ class BroteApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Brote',
-      debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.system,
-      theme: BroteTheme.lightTheme(context),
-      darkTheme: BroteTheme.darkTheme(context),
-      home: const AuthGate(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeService().mode,
+      builder: (context, themeMode, _) => MaterialApp(
+        title: 'Brote',
+        debugShowCheckedModeBanner: false,
+        themeMode: themeMode,
+        theme: BroteTheme.lightTheme(context),
+        darkTheme: BroteTheme.darkTheme(context),
+        home: const AuthGate(),
+      ),
     );
   }
 }

@@ -4,6 +4,7 @@ import '../models/chat_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/chat_crypto.dart';
+import '../services/chat_unread_service.dart';
 import 'chat_conversation_screen.dart';
 import 'new_chat_screen.dart';
 
@@ -47,6 +48,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
   Future<void> _loadChats() async {
     if (_isFetching) return;
     if (!AuthService().isAuthenticated) {
+      ChatUnreadService().clear();
       if (_isLoading && mounted) setState(() => _isLoading = false);
       return;
     }
@@ -62,6 +64,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
           }
           _isLoading = false;
         });
+        ChatUnreadService().update(_chats);
         await _decryptPreviews();
       }
     } finally {

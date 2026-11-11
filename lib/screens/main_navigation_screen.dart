@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/chat_unread_service.dart';
 import 'chats_screen.dart';
 import 'create_post_screen.dart';
 import 'feed_screen.dart';
@@ -46,46 +47,60 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         index: _currentIndex,
         children: _pages,
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          // Tabs live in an IndexedStack and never rebuild from scratch, so
-          // refresh them when entering (e.g. after following someone).
-          if (index != _currentIndex) {
-            if (index == 0) AuthService().postsRefreshNotifier.value++;
-            if (index == 3) AuthService().chatsRefreshNotifier.value++;
-            if (index == 4) AuthService().fetchMyProfile(); // follower/following counts
-          }
-          setState(() => _currentIndex = index);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: 'Feed',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.search_rounded),
-            selectedIcon: Icon(Icons.search_rounded),
-            label: 'Buscar',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.add_box_outlined),
-            selectedIcon: Icon(Icons.add_box_rounded),
-            label: 'Publicar',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline_rounded),
-            selectedIcon: Icon(Icons.chat_bubble_rounded),
-            label: 'Chats',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: 'Perfil',
-          ),
-        ],
+      bottomNavigationBar: ValueListenableBuilder<int>(
+        valueListenable: ChatUnreadService().unreadChats,
+        builder: (context, unreadChats, _) => NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (index) {
+            // Tabs live in an IndexedStack and never rebuild from scratch, so
+            // refresh them when entering (e.g. after following someone).
+            if (index != _currentIndex) {
+              if (index == 0) AuthService().postsRefreshNotifier.value++;
+              if (index == 3) AuthService().chatsRefreshNotifier.value++;
+              if (index == 4) AuthService().fetchMyProfile(); // follower/following counts
+            }
+            setState(() => _currentIndex = index);
+          },
+          destinations: [
+            const NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home_rounded),
+              label: 'Feed',
+            ),
+            const NavigationDestination(
+              icon: Icon(Icons.search_rounded),
+              selectedIcon: Icon(Icons.search_rounded),
+              label: 'Buscar',
+            ),
+            const NavigationDestination(
+              icon: Icon(Icons.add_box_outlined),
+              selectedIcon: Icon(Icons.add_box_rounded),
+              label: 'Publicar',
+            ),
+            NavigationDestination(
+              icon: _withUnreadBadge(const Icon(Icons.chat_bubble_outline_rounded), unreadChats),
+              selectedIcon: _withUnreadBadge(const Icon(Icons.chat_bubble_rounded), unreadChats),
+              tooltip: unreadChats == 0
+                  ? null
+                  : unreadChats == 1
+                      ? 'Chats: 1 conversación sin leer'
+                      : 'Chats: $unreadChats conversaciones sin leer',
+              label: 'Chats',
+            ),
+            const NavigationDestination(
+              icon: Icon(Icons.person_outline_rounded),
+              selectedIcon: Icon(Icons.person_rounded),
+              label: 'Perfil',
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  Widget _withUnreadBadge(Widget icon, int unreadChats) => Badge(
+        isLabelVisible: unreadChats > 0,
+        label: Text(unreadChats > 99 ? '99+' : '$unreadChats'),
+        child: icon,
+      );
 }
