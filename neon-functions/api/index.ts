@@ -811,6 +811,12 @@ app.post("/api/profile/:target/follow", async (c) => {
       [auth.userId, target.id, targetStatus]
     );
 
+    await notify(p, {
+      recipientId: target.id,
+      actorId: auth.userId,
+      type: targetStatus === "pending" ? "follow_request" : "follow",
+    });
+
     const profilePayload = await buildProfilePayload(p, target, auth.userId);
     return c.json({
       success: true,
@@ -854,6 +860,9 @@ app.post("/api/profile/:target/unfollow", async (c) => {
        WHERE follower_id = $1 AND following_id = $2`,
       [auth.userId, target.id]
     );
+
+    await clearNotification(p, { recipientId: target.id, actorId: auth.userId, type: "follow" });
+    await clearNotification(p, { recipientId: target.id, actorId: auth.userId, type: "follow_request" });
 
     const profilePayload = await buildProfilePayload(p, target, auth.userId);
     return c.json({
@@ -925,6 +934,9 @@ app.post("/api/profile/follow-requests/:followerId/accept", async (c) => {
       return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
     }
 
+    await clearNotification(p, { recipientId: auth.userId, actorId: followerId, type: "follow_request" });
+    await notify(p, { recipientId: followerId, actorId: auth.userId, type: "follow_accepted" });
+
     const profileRes = await p.query(
       "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
       [auth.userId]
@@ -962,6 +974,8 @@ app.post("/api/profile/follow-requests/:followerId/reject", async (c) => {
     if (res.rows.length === 0) {
       return c.json({ success: false, error: "Solicitud no encontrada" }, 404);
     }
+
+    await clearNotification(p, { recipientId: auth.userId, actorId: followerId, type: "follow_request" });
 
     const profileRes = await p.query(
       "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private FROM public.profiles WHERE id = $1",
@@ -1172,7 +1186,7 @@ app.get("/api/posts/feed", async (c) => {
   try {
     const auth = await getAuthenticatedUser(c);
     const viewerId = auth?.userId || null;
-    const filter = c.req.query("filter"); // "following" or undefined
+    const filter = c.req.query("filter"); // "following", "reviews" or undefined
     const p = getPool();
 
     if (filter === "following") {
@@ -1227,16 +1241,18 @@ app.get("/api/posts/feed", async (c) => {
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
       WHERE
-        pr.is_private = false
-        OR ($1::uuid IS NOT NULL AND (
-             p.author_id = $1::uuid
-             OR EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')
-           ))
+        (pr.is_private = false
+          OR ($1::uuid IS NOT NULL AND (
+               p.author_id = $1::uuid
+               OR EXISTS(SELECT 1 FROM public.follows f WHERE f.follower_id = $1::uuid AND f.following_id = p.author_id AND f.status = 'accepted')
+             )))
+        -- "reviews": posts whose first line is a movie or music review (see the app's PostContent)
+        AND ($2::boolean = false OR p.content ~ '^(🎬|🎵) ')
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
 
-    const res = await p.query(sql, [viewerId]);
+    const res = await p.query(sql, [viewerId, filter === "reviews"]);
     return c.json({
       success: true,
       posts: res.rows.map(mapPostRow),
@@ -1404,8 +1420,14 @@ app.post("/api/posts/:id/like", async (c) => {
       isLiked = true;
     }
 
-    const countRes = await p.query("SELECT likes_count FROM public.posts WHERE id = $1", [postId]);
+    const countRes = await p.query("SELECT likes_count, author_id FROM public.posts WHERE id = $1", [postId]);
     const likesCount = countRes.rows[0]?.likes_count ?? 0;
+
+    const authorId = countRes.rows[0]?.author_id;
+    if (authorId) {
+      const event = { recipientId: authorId, actorId: auth.userId, type: "like" as const, postId };
+      await (isLiked ? notify(p, event) : clearNotification(p, event));
+    }
 
     return c.json({
       success: true,
@@ -1779,6 +1801,14 @@ app.post("/api/chats/:conversationId/messages", async (c) => {
       [conversationId, auth.userId]
     );
 
+    const recipientsRes = await p.query(
+      "SELECT user_id FROM public.conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+      [conversationId, auth.userId]
+    );
+    for (const row of recipientsRes.rows) {
+      await notify(p, { recipientId: row.user_id, actorId: auth.userId, type: "message", conversationId });
+    }
+
     // Get sender info
     const senderRes = await p.query(
       "SELECT username, display_name, avatar_url FROM public.profiles WHERE id = $1",
@@ -2148,6 +2178,171 @@ app.get("/api/keys/:userId", async (c) => {
   } catch (err: any) {
     console.error("Get public chat key error:", err);
     return c.json({ success: false, error: err.message || "Error al obtener la clave" }, 500);
+  }
+});
+
+// In-app notifications: likes, follows, follow requests (and their acceptance) and messages.
+// Message notifications never include the content, which can be end-to-end encrypted.
+type NotificationType = "like" | "follow" | "follow_request" | "follow_accepted" | "message";
+
+interface NotificationEvent {
+  recipientId: string;
+  actorId: string;
+  type: NotificationType;
+  postId?: string | null;
+  conversationId?: string | null;
+}
+
+let notificationsTable: Promise<void> | null = null;
+function ensureNotificationsTable(p: Pool): Promise<void> {
+  if (!notificationsTable) {
+    notificationsTable = p
+      .query(
+        `CREATE TABLE IF NOT EXISTS public.notifications (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           recipient_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+           actor_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+           type VARCHAR(20) NOT NULL,
+           post_id UUID REFERENCES public.posts(id) ON DELETE CASCADE,
+           conversation_id UUID REFERENCES public.conversations(id) ON DELETE CASCADE,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+           read_at TIMESTAMPTZ
+         );
+         CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created
+           ON public.notifications (recipient_id, created_at DESC);`
+      )
+      .then(() => undefined)
+      .catch((err) => {
+        notificationsTable = null;
+        throw err;
+      });
+  }
+  return notificationsTable;
+}
+
+// Removes unread notifications for an event that was undone or handled. Never throws.
+async function clearNotification(p: Pool, event: NotificationEvent): Promise<void> {
+  try {
+    await ensureNotificationsTable(p);
+    await p.query(
+      `DELETE FROM public.notifications
+       WHERE recipient_id = $1 AND actor_id = $2 AND type = $3 AND read_at IS NULL
+         AND post_id IS NOT DISTINCT FROM $4::uuid
+         AND conversation_id IS NOT DISTINCT FROM $5::uuid`,
+      [event.recipientId, event.actorId, event.type, event.postId ?? null, event.conversationId ?? null]
+    );
+  } catch (err: any) {
+    console.error("Clear notification error:", err.message);
+  }
+}
+
+// Records a notification, replacing an unread one for the same event so repeats
+// (like/unlike/like, several messages) don't pile up. Never throws.
+async function notify(p: Pool, event: NotificationEvent): Promise<void> {
+  if (event.recipientId === event.actorId) return;
+  try {
+    await clearNotification(p, event);
+    await p.query(
+      `INSERT INTO public.notifications (recipient_id, actor_id, type, post_id, conversation_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [event.recipientId, event.actorId, event.type, event.postId ?? null, event.conversationId ?? null]
+    );
+  } catch (err: any) {
+    console.error("Notification error:", err.message);
+  }
+}
+
+async function unreadNotificationsCount(p: Pool, userId: string): Promise<number> {
+  const res = await p.query(
+    "SELECT COUNT(*)::int AS count FROM public.notifications WHERE recipient_id = $1 AND read_at IS NULL",
+    [userId]
+  );
+  return res.rows[0]?.count ?? 0;
+}
+
+// Latest notifications with who triggered them
+app.get("/api/notifications", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureNotificationsTable(p);
+    const res = await p.query(
+      `SELECT n.id, n.type, n.post_id, n.conversation_id, n.created_at, n.read_at,
+              a.id AS actor_id, a.username, a.display_name, a.avatar_url,
+              LEFT(po.content, 200) AS post_content
+       FROM public.notifications n
+       INNER JOIN public.profiles a ON a.id = n.actor_id
+       LEFT JOIN public.posts po ON po.id = n.post_id
+       WHERE n.recipient_id = $1
+       ORDER BY n.created_at DESC
+       LIMIT 50`,
+      [auth.userId]
+    );
+
+    return c.json({
+      success: true,
+      unreadCount: await unreadNotificationsCount(p, auth.userId),
+      notifications: res.rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        createdAt: row.created_at,
+        isRead: row.read_at !== null,
+        postId: row.post_id,
+        postContent: row.post_content,
+        conversationId: row.conversation_id,
+        actor: {
+          id: row.actor_id,
+          username: row.username,
+          displayName: row.display_name,
+          avatarUrl: row.avatar_url,
+        },
+      })),
+    });
+  } catch (err: any) {
+    console.error("Notifications error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener las notificaciones" }, 500);
+  }
+});
+
+// Unread count for the badge (cheap enough to poll)
+app.get("/api/notifications/unread-count", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureNotificationsTable(p);
+    return c.json({ success: true, unreadCount: await unreadNotificationsCount(p, auth.userId) });
+  } catch (err: any) {
+    console.error("Unread notifications error:", err);
+    return c.json({ success: false, error: err.message || "Error al contar las notificaciones" }, 500);
+  }
+});
+
+// Mark every notification as read
+app.post("/api/notifications/read", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const p = getPool();
+    await ensureNotificationsTable(p);
+    await p.query(
+      "UPDATE public.notifications SET read_at = now() WHERE recipient_id = $1 AND read_at IS NULL",
+      [auth.userId]
+    );
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("Read notifications error:", err);
+    return c.json({ success: false, error: err.message || "Error al marcar las notificaciones" }, 500);
   }
 });
 
