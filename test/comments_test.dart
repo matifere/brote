@@ -154,10 +154,15 @@ void main() {
       expect(AuthService().postsRefreshNotifier.value, refreshesBefore + 1);
       expect(find.text('Publicación borrada'), findsOneWidget);
 
-      // Someone else's post has no options menu
+      // Someone else's post has report/block options, but cannot be deleted
       await tester.pumpWidget(MaterialApp(home: Scaffold(body: PostCard(post: _post()))));
       await settle(tester);
-      expect(find.byTooltip('Opciones'), findsNothing);
+      await tester.tap(find.byTooltip('Opciones'));
+      await tester.pumpAndSettle();
+      expect(find.text('Borrar publicación'), findsNothing);
+      expect(find.text('Reportar publicación'), findsOneWidget);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
     });
   });
 

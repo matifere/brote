@@ -3,6 +3,7 @@ import '../models/post_comment.dart';
 import '../models/post_item.dart';
 import '../services/auth_service.dart';
 import '../widgets/post_card.dart';
+import '../widgets/report_dialog.dart';
 import 'profile_screen.dart';
 
 /// A post with its comments organized as threads (replies) and comment likes.
@@ -506,6 +507,19 @@ class _PostCommentsScreenState extends State<PostCommentsScreen> {
                     ),
 
                     const Spacer(),
+
+                    // Report button
+                    if (comment.author.id != _myId)
+                      IconButton(
+                        tooltip: 'Reportar comentario',
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(Icons.flag_outlined, size: 16, color: colorScheme.onSurfaceVariant),
+                        onPressed: () => showReportContentDialog(
+                          context,
+                          commentId: comment.id,
+                          targetTitle: 'comentario',
+                        ),
+                      ),
 
                     // Delete button
                     if (canDelete)

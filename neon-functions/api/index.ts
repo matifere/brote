@@ -196,7 +196,7 @@ app.post("/api/auth/login", async (c) => {
     const token = authData.token;
 
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, role, is_suspended FROM public.profiles WHERE id = $1",
       [userId]
     );
     const profile = profileRes.rows[0] || {
@@ -206,6 +206,8 @@ app.post("/api/auth/login", async (c) => {
       bio: null,
       avatarUrl: null,
       bannerUrl: null,
+      role: "user",
+      is_suspended: false,
     };
 
     return c.json({
@@ -219,6 +221,8 @@ app.post("/api/auth/login", async (c) => {
         bio: profile.bio,
         avatarUrl: profile.avatar_url,
         bannerUrl: profile.banner_url,
+        role: profile.role || "user",
+        isSuspended: Boolean(profile.is_suspended),
       },
     }, 200);
   } catch (err: any) {
@@ -238,7 +242,7 @@ app.get("/api/auth/me", async (c) => {
 
     const p = getPool();
     const res = await p.query(
-      `SELECT s.token, u.id, u.email, u.name, p.username, p.display_name, p.bio, p.avatar_url, COALESCE(p.banner_url, p.header_url) as banner_url
+      `SELECT s.token, u.id, u.email, u.name, p.username, p.display_name, p.bio, p.avatar_url, COALESCE(p.banner_url, p.header_url) as banner_url, p.role, p.is_suspended
        FROM neon_auth.session s
        INNER JOIN neon_auth.user u ON s."userId" = u.id
        INNER JOIN public.profiles p ON u.id = p.id
@@ -263,6 +267,8 @@ app.get("/api/auth/me", async (c) => {
         bio: row.bio,
         avatarUrl: row.avatar_url,
         bannerUrl: row.banner_url,
+        role: row.role || "user",
+        isSuspended: Boolean(row.is_suspended),
       },
     });
   } catch (err: any) {
@@ -291,6 +297,140 @@ async function getAuthenticatedUser(c: any): Promise<{ userId: string; email: st
     email: res.rows[0].email,
     token: res.rows[0].token,
   };
+}
+
+// --- MODERATION HEURISTICS & RULES ---
+function normalizeModerationText(text: string): string {
+  if (!text) return "";
+  let s = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const leetMap: Record<string, string> = {
+    "0": "o",
+    "1": "i",
+    "!": "i",
+    "|": "i",
+    "3": "e",
+    "4": "a",
+    "@": "a",
+    "5": "s",
+    "$": "s",
+    "7": "t",
+    "+": "t",
+    "8": "b",
+    "9": "g",
+  };
+  s = s.replace(/[01!|34@5$7+89]/g, (m) => leetMap[m] || m);
+  return s;
+}
+
+function checkContentModeration(rawText: string): { allowed: boolean; reason?: string } {
+  if (!rawText) return { allowed: true };
+  const normalized = normalizeModerationText(rawText);
+  const compressed = normalized.replace(/[^a-z0-9]/g, "");
+
+  // Critical harmful patterns: CSAM / Child exploitation (Zero tolerance)
+  const criticalHarms = [
+    /p[e3]d[o0]f[i1l]/i,
+    /pornografiainfantil/i,
+    /childporn/i,
+    /\bcp\s*(link|mega|drive|pack|descarga)\b/i,
+    /violacioninfantil/i,
+    /abuso.*menor/i,
+    /abuso.*infantil/i,
+  ];
+
+  for (const pattern of criticalHarms) {
+    if (pattern.test(normalized) || pattern.test(compressed)) {
+      return {
+        allowed: false,
+        reason: "Tu contenido fue rechazado por infringir las políticas de seguridad infantil.",
+      };
+    }
+  }
+
+  // Violence, terrorism, suicide incitement
+  const violencePatterns = [
+    /\b(matate|suicidate)\b/i,
+    /\b(tiroteo\s+escolar|school\s+shooting)\b/i,
+    /\b(fabricar\s+bomba|hacer\s+bomba|fabricar\s+explosivos)\b/i,
+    /\b(atentado\s+terrorista|isis\s+execution)\b/i,
+  ];
+
+  for (const pattern of violencePatterns) {
+    if (pattern.test(normalized)) {
+      return {
+        allowed: false,
+        reason: "Tu publicación contiene incitación a la violencia o daño físico.",
+      };
+    }
+  }
+
+  // Phishing / Scam / Crypto spam
+  const scamPatterns = [
+    /\b(gana|ganar)\s+dinero\s+(facil|rapido|sin\s+esfuerzo)\b/i,
+    /\b(inversion|ganancia)\s+garantizada\b/i,
+    /\b(duplica|multiplica)\s+tus\s+(usdt|cripto|btc|dolares)\b/i,
+    /\b(t\.me\/|wa\.me\/|telegram\s*:\s*@)/i,
+    /\b(free\s+crypto|claim\s+airdrop)\b/i,
+    /\b(onlyfans\s+leaked|hacks?\s+de\s+cuentas)\b/i,
+  ];
+
+  for (const pattern of scamPatterns) {
+    if (pattern.test(normalized)) {
+      return {
+        allowed: false,
+        reason: "El contenido parece spam o intento de estafa financiera / enlaces no permitidos.",
+      };
+    }
+  }
+
+  return { allowed: true };
+}
+
+async function verifyUserPostPermission(p: Pool, userId: string, type: "post" | "comment"): Promise<{ allowed: boolean; error?: string }> {
+  const profRes = await p.query(
+    "SELECT is_suspended, role FROM public.profiles WHERE id = $1",
+    [userId]
+  );
+  if (profRes.rows.length === 0) {
+    return { allowed: false, error: "Usuario no encontrado" };
+  }
+  const row = profRes.rows[0];
+  if (row.is_suspended) {
+    return { allowed: false, error: "Tu cuenta ha sido suspendida por infringir las normas comunitarias." };
+  }
+  if (row.role === "admin") {
+    return { allowed: true };
+  }
+
+  if (type === "post") {
+    const rateRes = await p.query(
+      "SELECT COUNT(*)::int as cnt FROM public.posts WHERE author_id = $1 AND created_at > now() - interval '1 minute'",
+      [userId]
+    );
+    if ((rateRes.rows[0]?.cnt ?? 0) >= 5) {
+      return { allowed: false, error: "Estás publicando demasiado rápido. Esperá un momento." };
+    }
+  } else {
+    const rateRes = await p.query(
+      "SELECT COUNT(*)::int as cnt FROM public.post_comments WHERE author_id = $1 AND created_at > now() - interval '1 minute'",
+      [userId]
+    );
+    if ((rateRes.rows[0]?.cnt ?? 0) >= 10) {
+      return { allowed: false, error: "Estás comentando demasiado rápido. Esperá un momento." };
+    }
+  }
+
+  return { allowed: true };
+}
+
+async function requireAdminUser(c: any): Promise<{ userId: string; role: string; p: Pool } | null> {
+  const auth = await getAuthenticatedUser(c);
+  if (!auth) return null;
+  const p = getPool();
+  const res = await p.query("SELECT role FROM public.profiles WHERE id = $1", [auth.userId]);
+  const role = res.rows[0]?.role || "user";
+  if (role !== "admin" && role !== "moderator") return null;
+  return { userId: auth.userId, role, p };
 }
 
 // Helper to construct rich profile payload with follow counts and privacy status
@@ -323,7 +463,20 @@ async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | 
     pendingRequestsCount = reqRes.rows[0]?.count ?? 0;
   }
 
+  let isBlocked = false;
   if (viewerId && !isOwner) {
+    const blockRes = await p.query(
+      `SELECT 1 FROM public.blocks
+       WHERE (blocker_id = $1 AND blocked_id = $2)
+          OR (blocker_id = $2 AND blocked_id = $1)
+       LIMIT 1`,
+      [viewerId, profileId]
+    );
+    if (blockRes.rows.length > 0) {
+      isBlocked = true;
+      canViewContent = false;
+    }
+
     const relRes = await p.query(
       `SELECT
         (SELECT status FROM public.follows WHERE follower_id = $1 AND following_id = $2) as my_status,
@@ -350,6 +503,8 @@ async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | 
     bio: profileRow.bio,
     avatarUrl: profileRow.avatar_url,
     bannerUrl: profileRow.banner_url,
+    role: profileRow.role || "user",
+    isSuspended: Boolean(profileRow.is_suspended),
     isPrivate,
     isVerified: Boolean(profileRow.is_verified),
     followersCount,
@@ -358,6 +513,7 @@ async function buildProfilePayload(p: any, profileRow: any, viewerId?: string | 
     followStatus,
     isFollowedBy,
     canViewContent,
+    isBlocked,
   };
 }
 
@@ -371,7 +527,7 @@ app.get("/api/profile/me", async (c) => {
 
     const p = getPool();
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified, role, is_suspended FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     if (profileRes.rows.length === 0) {
@@ -435,7 +591,7 @@ const updateProfileHandler = async (c: any) => {
     }
 
     values.push(auth.userId);
-    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified`;
+    const sql = `UPDATE public.profiles SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified, role, is_suspended`;
     const updateRes = await p.query(sql, values);
 
     // Keep auth user name synced
@@ -761,7 +917,7 @@ app.get("/api/profile/:username", async (c) => {
     const auth = await getAuthenticatedUser(c);
     const p = getPool();
     const res = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE lower(username) = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified, role, is_suspended FROM public.profiles WHERE lower(username) = $1",
       [username]
     );
     if (res.rows.length === 0) {
@@ -942,7 +1098,7 @@ app.post("/api/profile/follow-requests/:followerId/accept", async (c) => {
     await notify(p, { recipientId: followerId, actorId: auth.userId, type: "follow_accepted" });
 
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified, role, is_suspended FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
@@ -982,7 +1138,7 @@ app.post("/api/profile/follow-requests/:followerId/reject", async (c) => {
     await clearNotification(p, { recipientId: auth.userId, actorId: followerId, type: "follow_request" });
 
     const profileRes = await p.query(
-      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified FROM public.profiles WHERE id = $1",
+      "SELECT id, username, display_name, bio, avatar_url, COALESCE(banner_url, header_url) as banner_url, is_private, is_verified, role, is_suspended FROM public.profiles WHERE id = $1",
       [auth.userId]
     );
     const updatedProfile = await buildProfilePayload(p, profileRes.rows[0], auth.userId);
@@ -1107,6 +1263,14 @@ app.post("/api/posts", async (c) => {
       return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
     }
 
+    const p = getPool();
+
+    // Check suspension & rate limit
+    const perm = await verifyUserPostPermission(p, auth.userId, "post");
+    if (!perm.allowed) {
+      return c.json({ success: false, error: perm.error }, 403);
+    }
+
     const body = await c.req.json().catch(() => ({}));
     const content = typeof body.content === "string" ? body.content.trim() : "";
     const rawImages: unknown[] = Array.isArray(body.imageUrls)
@@ -1121,12 +1285,19 @@ app.post("/api/posts", async (c) => {
       return c.json({ success: false, error: "La publicación debe tener texto o una imagen." }, 400);
     }
 
-    const p = getPool();
+    // Heuristic content moderation check
+    const modCheck = checkContentModeration(content);
+    if (!modCheck.allowed) {
+      return c.json({ success: false, error: modCheck.reason }, 400);
+    }
+
+    const isSensitive = Boolean(body.isSensitive);
+
     const insertRes = await p.query(
-      `INSERT INTO public.posts (author_id, content, image_url, visibility, created_at, updated_at)
-       VALUES ($1, $2, $3, 'public', now(), now())
-       RETURNING id, author_id, content, image_url, likes_count, comments_count, created_at`,
-      [auth.userId, content || null, primaryImageUrl]
+      `INSERT INTO public.posts (author_id, content, image_url, visibility, is_sensitive, created_at, updated_at)
+       VALUES ($1, $2, $3, 'public', $4, now(), now())
+       RETURNING id, author_id, content, image_url, is_sensitive, is_hidden, reports_count, likes_count, comments_count, created_at`,
+      [auth.userId, content || null, primaryImageUrl, isSensitive]
     );
 
     const postRow = insertRes.rows[0];
@@ -1159,6 +1330,9 @@ app.post("/api/posts", async (c) => {
         content: postRow.content || "",
         imageUrl: postRow.image_url,
         imageUrls: imageUrls.length > 0 ? imageUrls : (postRow.image_url ? [postRow.image_url] : []),
+        isSensitive: Boolean(postRow.is_sensitive),
+        isHidden: Boolean(postRow.is_hidden),
+        reportsCount: Number(postRow.reports_count || 0),
         likesCount: postRow.likes_count || 0,
         commentsCount: postRow.comments_count || 0,
         repostsCount: 0,
@@ -1204,6 +1378,9 @@ function mapPostRow(row: any) {
     content: row.content || "",
     imageUrl: primaryImageUrl,
     imageUrls: imageUrls,
+    isSensitive: Boolean(row.is_sensitive),
+    isHidden: Boolean(row.is_hidden),
+    reportsCount: Number(row.reports_count || 0),
     likesCount: Number(row.likes_count || 0),
     commentsCount: Number(row.comments_count || 0),
     repostsCount: 0,
@@ -1234,6 +1411,9 @@ app.get("/api/posts/feed", async (c) => {
           p.content,
           COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
           COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
+          p.is_sensitive,
+          p.is_hidden,
+          p.reports_count,
           p.likes_count,
           p.comments_count,
           p.created_at,
@@ -1248,6 +1428,13 @@ app.get("/api/posts/feed", async (c) => {
         INNER JOIN public.profiles pr ON p.author_id = pr.id
         INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
         WHERE ${NOT_EXPIRED_POST}
+          AND (p.is_hidden = false OR p.author_id = $1::uuid)
+          AND (pr.is_suspended = false OR p.author_id = $1::uuid)
+          AND NOT EXISTS (
+            SELECT 1 FROM public.blocks b
+            WHERE (b.blocker_id = $1::uuid AND b.blocked_id = p.author_id)
+               OR (b.blocker_id = p.author_id AND b.blocked_id = $1::uuid)
+          )
         ORDER BY p.created_at DESC
         LIMIT 50;
       `;
@@ -1266,6 +1453,9 @@ app.get("/api/posts/feed", async (c) => {
         p.content,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
         COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
+        p.is_sensitive,
+        p.is_hidden,
+        p.reports_count,
         p.likes_count,
         p.comments_count,
         p.created_at,
@@ -1287,6 +1477,13 @@ app.get("/api/posts/feed", async (c) => {
         -- "reviews": posts whose first line is a movie or music review (see the app's PostContent)
         AND ($2::boolean = false OR p.content ~ '^(🎬|🎵) ')
         AND ${NOT_EXPIRED_POST}
+        AND (p.is_hidden = false OR p.author_id = $1::uuid)
+        AND (pr.is_suspended = false OR p.author_id = $1::uuid)
+        AND ($1::uuid IS NULL OR NOT EXISTS (
+          SELECT 1 FROM public.blocks b
+          WHERE (b.blocker_id = $1::uuid AND b.blocked_id = p.author_id)
+             OR (b.blocker_id = p.author_id AND b.blocked_id = $1::uuid)
+        ))
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -1320,6 +1517,9 @@ app.get("/api/posts/following", async (c) => {
         p.content,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
         COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
+        p.is_sensitive,
+        p.is_hidden,
+        p.reports_count,
         p.likes_count,
         p.comments_count,
         p.created_at,
@@ -1334,6 +1534,13 @@ app.get("/api/posts/following", async (c) => {
       INNER JOIN public.profiles pr ON p.author_id = pr.id
       INNER JOIN public.follows f ON f.following_id = p.author_id AND f.follower_id = $1::uuid AND f.status = 'accepted'
       WHERE ${NOT_EXPIRED_POST}
+        AND (p.is_hidden = false OR p.author_id = $1::uuid)
+        AND (pr.is_suspended = false OR p.author_id = $1::uuid)
+        AND NOT EXISTS (
+          SELECT 1 FROM public.blocks b
+          WHERE (b.blocker_id = $1::uuid AND b.blocked_id = p.author_id)
+             OR (b.blocker_id = p.author_id AND b.blocked_id = $1::uuid)
+        )
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -1372,6 +1579,24 @@ app.get("/api/posts/user/:target", async (c) => {
     const profile = profileRes.rows[0];
     const isOwner = viewerId && viewerId === profile.id;
 
+    if (viewerId && !isOwner) {
+      const blockRes = await p.query(
+        `SELECT 1 FROM public.blocks
+         WHERE (blocker_id = $1 AND blocked_id = $2)
+            OR (blocker_id = $2 AND blocked_id = $1)
+         LIMIT 1`,
+        [viewerId, profile.id]
+      );
+      if (blockRes.rows.length > 0) {
+        return c.json({
+          success: true,
+          locked: true,
+          isBlocked: true,
+          posts: [],
+        });
+      }
+    }
+
     if (profile.is_private && !isOwner) {
       let isFollower = false;
       if (viewerId) {
@@ -1397,6 +1622,9 @@ app.get("/api/posts/user/:target", async (c) => {
         p.content,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
         COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
+        p.is_sensitive,
+        p.is_hidden,
+        p.reports_count,
         p.likes_count,
         p.comments_count,
         p.created_at,
@@ -1408,7 +1636,9 @@ app.get("/api/posts/user/:target", async (c) => {
         ($2::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM public.post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $2::uuid)) as is_liked
       FROM public.posts p
       INNER JOIN public.profiles pr ON p.author_id = pr.id
-      WHERE p.author_id = $1 AND ${NOT_EXPIRED_POST}
+      WHERE p.author_id = $1
+        AND ${NOT_EXPIRED_POST}
+        AND (p.is_hidden = false OR $2::uuid = $1::uuid)
       ORDER BY p.created_at DESC
       LIMIT 50;
     `;
@@ -2311,9 +2541,12 @@ function ensurePostCommentsTable(p: Pool): Promise<void> {
 // The post's author when the viewer can see it (public author, the author, or an accepted follower)
 async function visiblePostAuthor(p: Pool, postId: string, viewerId: string): Promise<string | null> {
   const res = await p.query(
-    `SELECT p.author_id, pr.is_private,
+    `SELECT p.author_id, p.is_hidden, pr.is_private, pr.is_suspended,
             EXISTS(SELECT 1 FROM public.follows f
-                   WHERE f.follower_id = $2::uuid AND f.following_id = p.author_id AND f.status = 'accepted') AS follows
+                   WHERE f.follower_id = $2::uuid AND f.following_id = p.author_id AND f.status = 'accepted') AS follows,
+            EXISTS(SELECT 1 FROM public.blocks b
+                   WHERE (b.blocker_id = $2::uuid AND b.blocked_id = p.author_id)
+                      OR (b.blocker_id = p.author_id AND b.blocked_id = $2::uuid)) AS is_blocked
      FROM public.posts p
      INNER JOIN public.profiles pr ON pr.id = p.author_id
      WHERE p.id::text = $1 AND ${NOT_EXPIRED_POST}`,
@@ -2321,6 +2554,9 @@ async function visiblePostAuthor(p: Pool, postId: string, viewerId: string): Pro
   );
   const row = res.rows[0];
   if (!row) return null;
+  if (row.is_blocked) return null;
+  if (row.is_suspended && row.author_id !== viewerId) return null;
+  if (row.is_hidden && row.author_id !== viewerId) return null;
   if (row.is_private && row.author_id !== viewerId && !row.follows) return null;
   return row.author_id;
 }
@@ -2334,6 +2570,8 @@ function mapCommentRow(row: any) {
     createdAt: row.created_at,
     likesCount: Number(row.likes_count || 0),
     isLiked: Boolean(row.is_liked),
+    isHidden: Boolean(row.is_hidden),
+    reportsCount: Number(row.reports_count || 0),
     replyToUsername: row.reply_to_username || null,
     author: {
       id: row.author_id,
@@ -2360,6 +2598,7 @@ app.get("/api/posts/:id/comments", async (c) => {
 
     const res = await p.query(
       `SELECT cm.id, cm.post_id, cm.parent_id, cm.content, cm.created_at, cm.author_id,
+              cm.is_hidden, cm.reports_count,
               COALESCE(cm.likes_count, 0) AS likes_count,
               pr.username, pr.display_name, pr.avatar_url,
               parent_pr.username AS reply_to_username,
@@ -2372,6 +2611,13 @@ app.get("/api/posts/:id/comments", async (c) => {
        LEFT JOIN public.post_comments parent_cm ON parent_cm.id = cm.parent_id
        LEFT JOIN public.profiles parent_pr ON parent_pr.id = parent_cm.author_id
        WHERE cm.post_id = $1
+         AND (cm.is_hidden = false OR cm.author_id = $2::uuid)
+         AND (pr.is_suspended = false OR cm.author_id = $2::uuid)
+         AND NOT EXISTS (
+           SELECT 1 FROM public.blocks b
+           WHERE (b.blocker_id = $2::uuid AND b.blocked_id = cm.author_id)
+              OR (b.blocker_id = cm.author_id AND b.blocked_id = $2::uuid)
+         )
        ORDER BY cm.created_at ASC
        LIMIT 300`,
       [postId, auth.userId]
@@ -2390,6 +2636,14 @@ app.post("/api/posts/:id/comments", async (c) => {
       return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
     }
 
+    const p = getPool();
+
+    // Check suspension & rate limit
+    const perm = await verifyUserPostPermission(p, auth.userId, "comment");
+    if (!perm.allowed) {
+      return c.json({ success: false, error: perm.error }, 403);
+    }
+
     const body = await c.req.json().catch(() => ({}));
     const content = typeof body.content === "string" ? body.content.trim() : "";
     const parentId =
@@ -2402,12 +2656,29 @@ app.post("/api/posts/:id/comments", async (c) => {
       return c.json({ success: false, error: "El comentario no puede superar los 500 caracteres." }, 400);
     }
 
+    // Heuristic content moderation check
+    const modCheck = checkContentModeration(content);
+    if (!modCheck.allowed) {
+      return c.json({ success: false, error: modCheck.reason }, 400);
+    }
+
     const postId = c.req.param("id");
-    const p = getPool();
     await ensurePostCommentsTable(p);
     const postAuthorId = await visiblePostAuthor(p, postId, auth.userId);
     if (!postAuthorId) {
       return c.json({ success: false, error: "Publicación no encontrada" }, 404);
+    }
+
+    // Block check
+    const blockCheck = await p.query(
+      `SELECT 1 FROM public.blocks
+       WHERE (blocker_id = $1 AND blocked_id = $2)
+          OR (blocker_id = $2 AND blocked_id = $1)
+       LIMIT 1`,
+      [auth.userId, postAuthorId]
+    );
+    if (blockCheck.rows.length > 0) {
+      return c.json({ success: false, error: "No puedes comentar en esta publicación." }, 403);
     }
 
     let parentAuthorId: string | null = null;
@@ -2442,6 +2713,7 @@ app.post("/api/posts/:id/comments", async (c) => {
 
     const commentRes = await p.query(
       `SELECT cm.id, cm.post_id, cm.parent_id, cm.content, cm.created_at, cm.author_id,
+              cm.is_hidden, cm.reports_count,
               COALESCE(cm.likes_count, 0) AS likes_count,
               pr.username, pr.display_name, pr.avatar_url,
               parent_pr.username AS reply_to_username,
@@ -2775,6 +3047,370 @@ app.post("/api/notifications/read", async (c) => {
   } catch (err: any) {
     console.error("Read notifications error:", err);
     return c.json({ success: false, error: err.message || "Error al marcar las notificaciones" }, 500);
+  }
+});
+
+// ==========================================
+// REPORTS & COMMUNITY SAFETY (Pillars 3 & 4)
+// ==========================================
+
+// Create a report (against post, comment or user)
+app.post("/api/reports", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const postId = typeof body.postId === "string" && body.postId.trim().length > 0 ? body.postId.trim() : null;
+    const commentId = typeof body.commentId === "string" && body.commentId.trim().length > 0 ? body.commentId.trim() : null;
+    const reportedUserId = typeof body.userId === "string" && body.userId.trim().length > 0 ? body.userId.trim() : null;
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "other";
+    const details = typeof body.details === "string" ? body.details.trim() : null;
+
+    if (!postId && !commentId && !reportedUserId) {
+      return c.json({ success: false, error: "Debes especificar qué deseas reportar." }, 400);
+    }
+
+    const p = getPool();
+
+    // Prevent duplicate reports from the same user on the same entity
+    const existing = await p.query(
+      `SELECT id FROM public.reports
+       WHERE reporter_id = $1
+         AND (
+           ($2::uuid IS NOT NULL AND reported_post_id = $2::uuid)
+           OR ($3::uuid IS NOT NULL AND reported_comment_id = $3::uuid)
+           OR ($4::uuid IS NOT NULL AND reported_user_id = $4::uuid)
+         )
+       LIMIT 1`,
+      [auth.userId, postId, commentId, reportedUserId]
+    );
+
+    if (existing.rows.length > 0) {
+      return c.json({
+        success: true,
+        message: "Ya has reportado este contenido. Nuestro equipo lo está revisando.",
+      });
+    }
+
+    await p.query(
+      `INSERT INTO public.reports (reporter_id, reported_post_id, reported_comment_id, reported_user_id, reason, details)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [auth.userId, postId, commentId, reportedUserId, reason, details]
+    );
+
+    // Auto-hide threshold: if >= 3 reports, hide content automatically
+    if (postId) {
+      await p.query(
+        `UPDATE public.posts
+         SET reports_count = reports_count + 1,
+             is_hidden = CASE WHEN reports_count + 1 >= 3 THEN true ELSE is_hidden END
+         WHERE id = $1`,
+        [postId]
+      );
+    } else if (commentId) {
+      await p.query(
+        `UPDATE public.post_comments
+         SET reports_count = reports_count + 1,
+             is_hidden = CASE WHEN reports_count + 1 >= 3 THEN true ELSE is_hidden END
+         WHERE id = $1`,
+        [commentId]
+      );
+    }
+
+    return c.json({
+      success: true,
+      message: "Reporte recibido. Gracias por ayudar a mantener segura la comunidad.",
+    });
+  } catch (err: any) {
+    console.error("Report error:", err);
+    return c.json({ success: false, error: err.message || "Error al enviar reporte" }, 500);
+  }
+});
+
+// Block a user
+app.post("/api/users/:id/block", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const targetId = c.req.param("id");
+    if (targetId === auth.userId) {
+      return c.json({ success: false, error: "No puedes bloquearte a ti mismo" }, 400);
+    }
+
+    const p = getPool();
+    await p.query(
+      `INSERT INTO public.blocks (blocker_id, blocked_id)
+       VALUES ($1, $2)
+       ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+      [auth.userId, targetId]
+    );
+
+    // Break any follower/following relationship
+    await p.query(
+      `DELETE FROM public.follows
+       WHERE (follower_id = $1 AND following_id = $2)
+          OR (follower_id = $2 AND following_id = $1)`,
+      [auth.userId, targetId]
+    );
+
+    return c.json({ success: true, isBlocked: true });
+  } catch (err: any) {
+    console.error("Block user error:", err);
+    return c.json({ success: false, error: err.message || "Error al bloquear usuario" }, 500);
+  }
+});
+
+// Unblock a user
+app.delete("/api/users/:id/block", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const targetId = c.req.param("id");
+    const p = getPool();
+    await p.query(
+      "DELETE FROM public.blocks WHERE blocker_id = $1 AND blocked_id = $2",
+      [auth.userId, targetId]
+    );
+
+    return c.json({ success: true, isBlocked: false });
+  } catch (err: any) {
+    console.error("Unblock user error:", err);
+    return c.json({ success: false, error: err.message || "Error al desbloquear usuario" }, 500);
+  }
+});
+
+// Check block status with a user
+app.get("/api/users/:id/block", async (c) => {
+  try {
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    const targetId = c.req.param("id");
+    const p = getPool();
+    const res = await p.query(
+      "SELECT 1 FROM public.blocks WHERE blocker_id = $1 AND blocked_id = $2",
+      [auth.userId, targetId]
+    );
+
+    return c.json({ success: true, isBlocked: res.rows.length > 0 });
+  } catch (err: any) {
+    console.error("Get block status error:", err);
+    return c.json({ success: false, error: err.message || "Error al consultar estado de bloqueo" }, 500);
+  }
+});
+
+// List reports (Admin & Moderator Dashboard)
+app.get("/api/admin/reports", async (c) => {
+  try {
+    const admin = await requireAdminUser(c);
+    if (!admin) {
+      return c.json({ success: false, error: "Acceso denegado. Se requieren permisos de moderación." }, 403);
+    }
+
+    const status = c.req.query("status") || "pending";
+    const { p } = admin;
+
+    const sql = `
+      SELECT
+        r.id,
+        r.reason,
+        r.details,
+        r.status,
+        r.action_taken,
+        r.created_at,
+        r.resolved_at,
+        -- Reporter
+        rep.id as reporter_id,
+        rep.username as reporter_username,
+        rep.display_name as reporter_name,
+        rep.avatar_url as reporter_avatar_url,
+        -- Reported post
+        po.id as post_id,
+        po.content as post_content,
+        po.image_url as post_image_url,
+        po.is_sensitive as post_is_sensitive,
+        po.is_hidden as post_is_hidden,
+        po.reports_count as post_reports_count,
+        po_author.id as post_author_id,
+        po_author.username as post_author_username,
+        po_author.display_name as post_author_name,
+        -- Reported comment
+        cm.id as comment_id,
+        cm.content as comment_content,
+        cm.is_hidden as comment_is_hidden,
+        cm.reports_count as comment_reports_count,
+        cm_author.id as comment_author_id,
+        cm_author.username as comment_author_username,
+        cm_author.display_name as comment_author_name,
+        -- Reported user
+        ru.id as user_id,
+        ru.username as user_username,
+        ru.display_name as user_name,
+        ru.avatar_url as user_avatar_url,
+        ru.is_suspended as user_is_suspended
+      FROM public.reports r
+      LEFT JOIN public.profiles rep ON rep.id = r.reporter_id
+      LEFT JOIN public.posts po ON po.id = r.reported_post_id
+      LEFT JOIN public.profiles po_author ON po_author.id = po.author_id
+      LEFT JOIN public.post_comments cm ON cm.id = r.reported_comment_id
+      LEFT JOIN public.profiles cm_author ON cm_author.id = cm.author_id
+      LEFT JOIN public.profiles ru ON ru.id = r.reported_user_id
+      WHERE ($1 = 'all' OR r.status = $1)
+      ORDER BY r.created_at DESC
+      LIMIT 100
+    `;
+
+    const res = await p.query(sql, [status]);
+    return c.json({
+      success: true,
+      reports: res.rows.map((row) => ({
+        id: row.id,
+        reason: row.reason,
+        details: row.details,
+        status: row.status,
+        actionTaken: row.action_taken,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at,
+        reporter: row.reporter_id ? {
+          id: row.reporter_id,
+          username: row.reporter_username,
+          displayName: row.reporter_name,
+          avatarUrl: row.reporter_avatar_url,
+        } : null,
+        post: row.post_id ? {
+          id: row.post_id,
+          content: row.post_content,
+          imageUrl: row.post_image_url,
+          isSensitive: Boolean(row.post_is_sensitive),
+          isHidden: Boolean(row.post_is_hidden),
+          reportsCount: Number(row.post_reports_count || 0),
+          authorId: row.post_author_id,
+          authorUsername: row.post_author_username,
+          authorName: row.post_author_name,
+        } : null,
+        comment: row.comment_id ? {
+          id: row.comment_id,
+          content: row.comment_content,
+          isHidden: Boolean(row.comment_is_hidden),
+          reportsCount: Number(row.comment_reports_count || 0),
+          authorId: row.comment_author_id,
+          authorUsername: row.comment_author_username,
+          authorName: row.comment_author_name,
+        } : null,
+        user: row.user_id ? {
+          id: row.user_id,
+          username: row.user_username,
+          displayName: row.user_name,
+          avatarUrl: row.user_avatar_url,
+          isSuspended: Boolean(row.user_is_suspended),
+        } : null,
+      })),
+    });
+  } catch (err: any) {
+    console.error("Admin reports error:", err);
+    return c.json({ success: false, error: err.message || "Error al obtener reportes" }, 500);
+  }
+});
+
+// Take moderator action on a report
+app.post("/api/admin/reports/:id/action", async (c) => {
+  try {
+    const admin = await requireAdminUser(c);
+    if (!admin) {
+      return c.json({ success: false, error: "Acceso denegado. Se requieren permisos de moderación." }, 403);
+    }
+
+    const reportId = c.req.param("id");
+    const body = await c.req.json().catch(() => ({}));
+    const action = body.action; // 'dismiss' | 'hide' | 'delete' | 'suspend'
+    const { p, userId } = admin;
+
+    const repRes = await p.query(
+      "SELECT * FROM public.reports WHERE id = $1",
+      [reportId]
+    );
+    if (repRes.rows.length === 0) {
+      return c.json({ success: false, error: "Reporte no encontrado" }, 404);
+    }
+    const report = repRes.rows[0];
+
+    if (action === "dismiss") {
+      await p.query(
+        `UPDATE public.reports
+         SET status = 'dismissed', action_taken = 'dismiss', resolved_at = now(), resolved_by = $1
+         WHERE id = $2`,
+        [userId, reportId]
+      );
+      if (report.reported_post_id) {
+        await p.query("UPDATE public.posts SET is_hidden = false, reports_count = 0 WHERE id = $1", [report.reported_post_id]);
+      } else if (report.reported_comment_id) {
+        await p.query("UPDATE public.post_comments SET is_hidden = false, reports_count = 0 WHERE id = $1", [report.reported_comment_id]);
+      }
+    } else if (action === "hide") {
+      await p.query(
+        `UPDATE public.reports
+         SET status = 'resolved', action_taken = 'hide', resolved_at = now(), resolved_by = $1
+         WHERE id = $2`,
+        [userId, reportId]
+      );
+      if (report.reported_post_id) {
+        await p.query("UPDATE public.posts SET is_hidden = true WHERE id = $1", [report.reported_post_id]);
+      } else if (report.reported_comment_id) {
+        await p.query("UPDATE public.post_comments SET is_hidden = true WHERE id = $1", [report.reported_comment_id]);
+      }
+    } else if (action === "delete") {
+      await p.query(
+        `UPDATE public.reports
+         SET status = 'resolved', action_taken = 'delete', resolved_at = now(), resolved_by = $1
+         WHERE id = $2`,
+        [userId, reportId]
+      );
+      if (report.reported_post_id) {
+        await p.query("DELETE FROM public.posts WHERE id = $1", [report.reported_post_id]);
+      } else if (report.reported_comment_id) {
+        await p.query("DELETE FROM public.post_comments WHERE id = $1", [report.reported_comment_id]);
+      }
+    } else if (action === "suspend") {
+      await p.query(
+        `UPDATE public.reports
+         SET status = 'resolved', action_taken = 'suspend', resolved_at = now(), resolved_by = $1
+         WHERE id = $2`,
+        [userId, reportId]
+      );
+
+      let targetUserId = report.reported_user_id;
+      if (!targetUserId && report.reported_post_id) {
+        const poRes = await p.query("SELECT author_id FROM public.posts WHERE id = $1", [report.reported_post_id]);
+        targetUserId = poRes.rows[0]?.author_id;
+      } else if (!targetUserId && report.reported_comment_id) {
+        const cmRes = await p.query("SELECT author_id FROM public.post_comments WHERE id = $1", [report.reported_comment_id]);
+        targetUserId = cmRes.rows[0]?.author_id;
+      }
+
+      if (targetUserId) {
+        await p.query("UPDATE public.profiles SET is_suspended = true WHERE id = $1", [targetUserId]);
+        await p.query("UPDATE public.posts SET is_hidden = true WHERE author_id = $1", [targetUserId]);
+        await p.query("UPDATE public.post_comments SET is_hidden = true WHERE author_id = $1", [targetUserId]);
+      }
+    } else {
+      return c.json({ success: false, error: "Acción no válida." }, 400);
+    }
+
+    return c.json({ success: true, message: `Acción '${action}' aplicada correctamente.` });
+  } catch (err: any) {
+    console.error("Report action error:", err);
+    return c.json({ success: false, error: err.message || "Error al procesar acción sobre reporte" }, 500);
   }
 });
 

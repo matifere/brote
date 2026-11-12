@@ -3,6 +3,7 @@ import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/chat_unread_service.dart';
 import '../widgets/brote_logo.dart';
+import 'admin_moderation_screen.dart';
 import 'auth_screen.dart';
 import 'chats_screen.dart';
 import 'create_post_screen.dart';
@@ -314,6 +315,52 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             const SizedBox(height: 4),
           ],
 
+          ValueListenableBuilder<UserProfile?>(
+            valueListenable: AuthService().currentUserNotifier,
+            builder: (context, user, _) {
+              final active = user ?? widget.profile;
+              if (!active.isAdmin) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const AdminModerationScreen()),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isLarge ? 16 : 10,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        mainAxisSize: isLarge ? MainAxisSize.max : MainAxisSize.min,
+                        mainAxisAlignment: isLarge ? MainAxisAlignment.start : MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.shield_outlined, size: 24, color: colorScheme.primary),
+                          if (isLarge) ...[
+                            const SizedBox(width: 16),
+                            Text(
+                              'Moderación',
+                              style: textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+
           const SizedBox(height: 12),
 
           // Publicar Action Button
@@ -432,6 +479,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     icon: Icon(Icons.more_vert_rounded, size: 18, color: colorScheme.onSurfaceVariant),
                     onSelected: (val) {
                       if (val == 'profile') _selectTab(4);
+                      if (val == 'moderation') {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const AdminModerationScreen()),
+                        );
+                      }
                       if (val == 'logout') _handleLogout();
                     },
                     itemBuilder: (ctx) => [
@@ -445,6 +497,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                           ],
                         ),
                       ),
+                      if (active.isAdmin)
+                        const PopupMenuItem(
+                          value: 'moderation',
+                          child: Row(
+                            children: [
+                              Icon(Icons.shield_outlined, size: 18),
+                              SizedBox(width: 10),
+                              Text('Panel de Moderación'),
+                            ],
+                          ),
+                        ),
                       const PopupMenuItem(
                         value: 'logout',
                         child: Row(

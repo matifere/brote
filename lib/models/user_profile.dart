@@ -14,6 +14,9 @@ class UserProfile {
   final bool isFollowedBy;
   final bool canViewContent;
   final bool isVerified;
+  final String role; // 'user', 'moderator', 'admin'
+  final bool isSuspended;
+  final bool isBlocked;
 
   const UserProfile({
     required this.id,
@@ -31,10 +34,14 @@ class UserProfile {
     this.isFollowedBy = false,
     this.canViewContent = true,
     this.isVerified = false,
+    this.role = 'user',
+    this.isSuspended = false,
+    this.isBlocked = false,
   });
 
   bool get isFollowing => followStatus == 'accepted';
   bool get isPending => followStatus == 'pending';
+  bool get isAdmin => role == 'admin' || role == 'moderator';
 
   factory UserProfile.fromJson(Map<String, dynamic> json, {String? email}) {
     return UserProfile(
@@ -53,6 +60,9 @@ class UserProfile {
       isFollowedBy: json['isFollowedBy'] as bool? ?? json['is_followed_by'] as bool? ?? false,
       canViewContent: json['canViewContent'] as bool? ?? json['can_view_content'] as bool? ?? true,
       isVerified: json['isVerified'] as bool? ?? json['is_verified'] as bool? ?? false,
+      role: json['role'] as String? ?? 'user',
+      isSuspended: json['isSuspended'] as bool? ?? json['is_suspended'] as bool? ?? false,
+      isBlocked: json['isBlocked'] as bool? ?? json['is_blocked'] as bool? ?? false,
     );
   }
 
@@ -73,6 +83,9 @@ class UserProfile {
       'isFollowedBy': isFollowedBy,
       'canViewContent': canViewContent,
       'isVerified': isVerified,
+      'role': role,
+      'isSuspended': isSuspended,
+      'isBlocked': isBlocked,
     };
   }
 
@@ -92,6 +105,9 @@ class UserProfile {
     bool? isFollowedBy,
     bool? canViewContent,
     bool? isVerified,
+    String? role,
+    bool? isSuspended,
+    bool? isBlocked,
   }) {
     return UserProfile(
       id: id ?? this.id,
@@ -109,6 +125,9 @@ class UserProfile {
       isFollowedBy: isFollowedBy ?? this.isFollowedBy,
       canViewContent: canViewContent ?? this.canViewContent,
       isVerified: isVerified ?? this.isVerified,
+      role: role ?? this.role,
+      isSuspended: isSuspended ?? this.isSuspended,
+      isBlocked: isBlocked ?? this.isBlocked,
     );
   }
 }

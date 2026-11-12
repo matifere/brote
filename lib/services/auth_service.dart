@@ -8,6 +8,7 @@ import '../models/chat_message.dart';
 import '../models/rating.dart';
 import '../models/post_comment.dart';
 import '../models/post_item.dart';
+import '../models/report_item.dart';
 import '../models/user_profile.dart';
 import 'chat_crypto.dart';
 
@@ -903,14 +904,21 @@ class AuthService {
     return null;
   }
 
+  String? lastCreatePostError;
+
   /// Creates a new publication (plain text, markdown, images or text with images)
   Future<PostItem?> createPost({
     String? content,
     String? imageUrl,
     List<String>? imageUrls,
+    bool isSensitive = false,
   }) async {
+    lastCreatePostError = null;
     final token = _sessionToken;
-    if (token == null) return null;
+    if (token == null) {
+      lastCreatePostError = 'No has iniciado sesión';
+      return null;
+    }
 
     final resolvedImages = (imageUrls != null && imageUrls.isNotEmpty)
         ? imageUrls
@@ -929,6 +937,7 @@ class AuthService {
           'content': content?.trim(),
           'imageUrl': primaryImage,
           'imageUrls': resolvedImages,
+          'isSensitive': isSensitive,
         }),
       ).timeout(const Duration(seconds: 15));
 
@@ -936,11 +945,164 @@ class AuthService {
       if (response.statusCode == 200 && data['success'] == true && data['post'] != null) {
         postsRefreshNotifier.value++;
         return PostItem.fromJson(data['post'] as Map<String, dynamic>);
+      } else {
+        lastCreatePostError = data['error'] as String? ?? 'Error al publicar';
       }
     } catch (e) {
       debugPrint('Error creating post: $e');
+      lastCreatePostError = e.toString();
     }
     return null;
+  }
+
+  /// Sends a report against a post, comment or user
+  Future<({bool success, String message, String? error})> reportContent({
+    String? postId,
+    String? commentId,
+    String? userId,
+    required String reason,
+    String? details,
+  }) async {
+    final token = _sessionToken;
+    if (token == null) return (success: false, message: '', error: 'No autorizado');
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/reports');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'postId': postId,
+          'commentId': commentId,
+          'userId': userId,
+          'reason': reason,
+          'details': details,
+        }),
+      ).timeout(const Duration(seconds: 15));
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        return (
+          success: true,
+          message: data['message'] as String? ?? 'Reporte enviado con éxito',
+          error: null,
+        );
+      }
+      return (
+        success: false,
+        message: '',
+        error: data['error'] as String? ?? 'No se pudo enviar el reporte',
+      );
+    } catch (e) {
+      return (success: false, message: '', error: e.toString());
+    }
+  }
+
+  /// Blocks a user
+  Future<bool> blockUser(String userId) async {
+    final token = _sessionToken;
+    if (token == null) return false;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/users/$userId/block');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        postsRefreshNotifier.value++;
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Error blocking user: $e');
+    }
+    return false;
+  }
+
+  /// Unblocks a user
+  Future<bool> unblockUser(String userId) async {
+    final token = _sessionToken;
+    if (token == null) return false;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/users/$userId/block');
+      final response = await http.delete(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        postsRefreshNotifier.value++;
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Error unblocking user: $e');
+    }
+    return false;
+  }
+
+  /// Fetches reports for admin / moderator dashboard
+  Future<List<ReportItem>> getAdminReports({String status = 'pending'}) async {
+    final token = _sessionToken;
+    if (token == null) return const [];
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/admin/reports?status=$status');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['success'] == true && data['reports'] is List) {
+          return (data['reports'] as List)
+              .map((r) => ReportItem.fromJson(r as Map<String, dynamic>))
+              .toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching admin reports: $e');
+    }
+    return const [];
+  }
+
+  /// Performs a moderation action on a report (dismiss, hide, delete, suspend)
+  Future<bool> takeAdminReportAction(String reportId, String action) async {
+    final token = _sessionToken;
+    if (token == null) return false;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/admin/reports/$reportId/action');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'action': action}),
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        return data['success'] == true;
+      }
+    } catch (e) {
+      debugPrint('Error taking admin report action: $e');
+    }
+    return false;
   }
 
   /// Fetches feed posts from Neon

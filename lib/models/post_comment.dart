@@ -10,6 +10,8 @@ class PostComment {
   final DateTime? createdAt;
   int likesCount;
   bool isLiked;
+  final bool isHidden;
+  final int reportsCount;
 
   PostComment({
     required this.id,
@@ -21,6 +23,8 @@ class PostComment {
     this.createdAt,
     this.likesCount = 0,
     this.isLiked = false,
+    this.isHidden = false,
+    this.reportsCount = 0,
   });
 
   factory PostComment.fromJson(Map<String, dynamic> json) {
@@ -41,6 +45,8 @@ class PostComment {
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '')?.toLocal(),
       likesCount: (json['likesCount'] as num?)?.toInt() ?? 0,
       isLiked: json['isLiked'] == true,
+      isHidden: json['isHidden'] as bool? ?? json['is_hidden'] as bool? ?? false,
+      reportsCount: (json['reportsCount'] as num? ?? json['reports_count'] as num? ?? 0).toInt(),
     );
   }
 

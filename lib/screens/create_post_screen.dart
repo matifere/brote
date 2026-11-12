@@ -40,6 +40,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   bool _isPublishing = false;
   bool _showPreview = false;
   bool _isEphemeral = false;
+  bool _isSensitive = false;
 
   /// Movie, song or album being reviewed, and its stars (0 = not chosen yet).
   CatalogItem? _reviewItem;
@@ -249,6 +250,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         content: content.isNotEmpty ? content : null,
         imageUrl: uploadedImageUrls.isNotEmpty ? uploadedImageUrls.first : null,
         imageUrls: uploadedImageUrls.isNotEmpty ? uploadedImageUrls : null,
+        isSensitive: _isSensitive,
       );
 
       // Like rating from the profile, a published review also lands in the
@@ -271,6 +273,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           _selectedImages.clear();
           _showPreview = false;
           _isEphemeral = false;
+          _isSensitive = false;
           _reviewItem = null;
           _reviewStars = 0;
         });
@@ -293,8 +296,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
         widget.onPublished?.call();
       } else {
+        final errorMsg = AuthService().lastCreatePostError ?? 'No se pudo crear la publicación. Intentá de nuevo.';
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo crear la publicación. Intentá de nuevo.')),
+          SnackBar(
+            content: Text(errorMsg),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } catch (e) {
@@ -780,6 +788,41 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   ? 'Se deja de mostrar en Brote 24 horas después de publicarla.'
                   : 'Queda en tu perfil y en el feed.',
               style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 14),
+            Material(
+              color: colorScheme.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: _isSensitive
+                      ? Colors.orangeAccent.withValues(alpha: 0.6)
+                      : colorScheme.outlineVariant.withValues(alpha: 0.3),
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                dense: true,
+                secondary: Icon(
+                  Icons.visibility_off_outlined,
+                  size: 20,
+                  color: _isSensitive ? Colors.orangeAccent : colorScheme.onSurfaceVariant,
+                ),
+                title: Text(
+                  'Contenido sensible / +18',
+                  style: textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: _isSensitive ? Colors.orangeAccent : colorScheme.onSurface,
+                  ),
+                ),
+                subtitle: Text(
+                  'Se desenfoca tras una advertencia hasta que quien lo vea decida abrirlo.',
+                  style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+                value: _isSensitive,
+                onChanged: (val) => setState(() => _isSensitive = val),
+              ),
             ),
           ],
         ),

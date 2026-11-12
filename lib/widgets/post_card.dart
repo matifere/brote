@@ -1,3 +1,4 @@
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -10,6 +11,7 @@ import '../services/auth_service.dart';
 import '../services/catalog_service.dart';
 import 'full_screen_image_viewer.dart';
 import 'rating_stars.dart';
+import 'report_dialog.dart';
 
 class PostCard extends StatefulWidget {
   final PostItem post;
@@ -35,6 +37,7 @@ class _PostCardState extends State<PostCard> {
   late int _commentsCount;
   bool _isLikeLoading = false;
   String? _moviePosterUrl;
+  bool _revealedSensitive = false;
 
   @override
   void initState() {
@@ -93,6 +96,37 @@ class _PostCardState extends State<PostCard> {
     final deleted = await AuthService().deletePost(widget.post.id);
     messenger.showSnackBar(
       SnackBar(content: Text(deleted ? 'Publicación borrada' : 'No se pudo borrar la publicación')),
+    );
+  }
+
+  Future<void> _confirmBlock() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('¿Bloquear a @${widget.post.authorUsername}?'),
+        content: const Text('Dejarás de ver sus publicaciones, comentarios y no podrán enviarse mensajes en Brote.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Bloquear'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final blocked = await AuthService().blockUser(widget.post.authorId);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(blocked ? 'Usuario bloqueado.' : 'No se pudo bloquear al usuario.'),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -255,10 +289,46 @@ class _PostCardState extends State<PostCard> {
                               ),
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              '· ${widget.post.timeAgo}',
-                              style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                            Flexible(
+                              child: Text(
+                                '· ${widget.post.timeAgo}',
+                                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
+                            if (widget.post.isSensitive) ...[
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                onTap: () => setState(() => _revealedSensitive = !_revealedSensitive),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orangeAccent.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.orangeAccent.withValues(alpha: 0.4), width: 0.5),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        _revealedSensitive ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                                        size: 11,
+                                        color: Colors.orangeAccent,
+                                      ),
+                                      const SizedBox(width: 3),
+                                      const Text(
+                                        'Sensible',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.orangeAccent,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                             if (timeLeft != null) ...[
                               const SizedBox(width: 6),
                               Icon(Icons.timelapse_rounded, size: 13, color: colorScheme.tertiary),
@@ -279,21 +349,78 @@ class _PostCardState extends State<PostCard> {
                         ),
                       ),
                     ),
-                    if (_isOwnPost)
-                      SizedBox(
-                        width: 28,
-                        height: 24,
-                        child: PopupMenuButton<String>(
-                          tooltip: 'Opciones',
-                          padding: EdgeInsets.zero,
-                          iconSize: 18,
-                          icon: Icon(Icons.more_horiz_rounded, color: colorScheme.onSurfaceVariant),
-                          onSelected: (_) => _confirmDelete(),
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(value: 'delete', child: Text('Borrar publicación')),
+                    SizedBox(
+                      width: 28,
+                      height: 24,
+                      child: PopupMenuButton<String>(
+                        tooltip: 'Opciones',
+                        padding: EdgeInsets.zero,
+                        iconSize: 18,
+                        icon: Icon(Icons.more_horiz_rounded, color: colorScheme.onSurfaceVariant),
+                        onSelected: (val) {
+                          if (val == 'delete') {
+                            _confirmDelete();
+                          } else if (val == 'report') {
+                            showReportContentDialog(
+                              context,
+                              postId: widget.post.id,
+                              targetTitle: 'publicación',
+                            );
+                          } else if (val == 'block') {
+                            _confirmBlock();
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          if (_isOwnPost)
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.delete_outline_rounded, size: 18, color: Colors.redAccent),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Borrar publicación',
+                                      style: TextStyle(color: Colors.redAccent),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else ...[
+                            const PopupMenuItem(
+                              value: 'report',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.flag_outlined, size: 18),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text('Reportar publicación', overflow: TextOverflow.ellipsis),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'block',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.block_rounded, size: 18, color: Colors.redAccent),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Bloquear usuario',
+                                      style: TextStyle(color: Colors.redAccent),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
-                        ),
+                        ],
                       ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -341,7 +468,10 @@ class _PostCardState extends State<PostCard> {
                 // Post Media Attachment(s) (skip if already displayed as movie poster in review)
                 if (postImages.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  _buildMediaGrid(postImages, colorScheme),
+                  if (widget.post.isSensitive && !_revealedSensitive)
+                    _buildSensitiveMediaCover(postImages, colorScheme)
+                  else
+                    _buildMediaGrid(postImages, colorScheme),
                 ],
 
                 const SizedBox(height: 14),
@@ -535,6 +665,70 @@ class _PostCardState extends State<PostCard> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSensitiveMediaCover(List<String> postImages, ColorScheme colorScheme) {
+    return Container(
+      height: 220,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Blurred background
+            ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Image.network(
+                postImages.first,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => const SizedBox(),
+              ),
+            ),
+            Container(
+              color: Colors.black.withValues(alpha: 0.45),
+            ),
+            Center(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => setState(() => _revealedSensitive = true),
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.visibility_off_outlined, color: Colors.white, size: 18),
+                        SizedBox(width: 8),
+                        Text(
+                          'Contenido sensible · Mostrar',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -17,6 +17,9 @@ class PostItem {
   bool isLiked;
   bool isBookmarked;
   final bool isFollowingAuthor;
+  final bool isSensitive;
+  final bool isHidden;
+  final int reportsCount;
 
   PostItem({
     required this.id,
@@ -35,6 +38,9 @@ class PostItem {
     this.isLiked = false,
     this.isBookmarked = false,
     this.isFollowingAuthor = false,
+    this.isSensitive = false,
+    this.isHidden = false,
+    this.reportsCount = 0,
   });
 
   /// Review header, body and 24-hour mark encoded in the post text.
@@ -103,6 +109,9 @@ class PostItem {
       isLiked: json['isLiked'] as bool? ?? json['is_liked'] as bool? ?? false,
       isBookmarked: json['isBookmarked'] as bool? ?? json['is_bookmarked'] as bool? ?? false,
       isFollowingAuthor: json['isFollowingAuthor'] as bool? ?? json['is_following_author'] as bool? ?? false,
+      isSensitive: json['isSensitive'] as bool? ?? json['is_sensitive'] as bool? ?? false,
+      isHidden: json['isHidden'] as bool? ?? json['is_hidden'] as bool? ?? false,
+      reportsCount: (json['reportsCount'] as num? ?? json['reports_count'] as num? ?? 0).toInt(),
     );
   }
 }

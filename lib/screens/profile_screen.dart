@@ -10,7 +10,9 @@ import '../widgets/brote_logo.dart';
 import '../widgets/full_screen_image_viewer.dart';
 import '../widgets/rating_stars.dart';
 import '../widgets/post_card.dart';
+import '../widgets/report_dialog.dart';
 import '../widgets/taste_affinity.dart';
+import 'admin_moderation_screen.dart';
 import 'auth_screen.dart';
 import 'chat_conversation_screen.dart';
 import 'edit_profile_screen.dart';
@@ -188,6 +190,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _handleBlockUser() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('¿Bloquear a @${_currentProfile.username}?'),
+        content: const Text(
+          'Dejarás de ver sus publicaciones, comentarios y no podrán interactuar.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Bloquear'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      final ok = await AuthService().blockUser(_currentProfile.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? 'Usuario bloqueado.' : 'Error al bloquear usuario.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      if (ok) {
+        setState(() {
+          _currentProfile = _currentProfile.copyWith(
+            isBlocked: true,
+            canViewContent: false,
+          );
+        });
+      }
+    }
+  }
+
+  Future<void> _handleUnblockUser() async {
+    final ok = await AuthService().unblockUser(_currentProfile.id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? 'Usuario desbloqueado.' : 'Error al desbloquear usuario.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    if (ok) {
+      setState(() {
+        _currentProfile = _currentProfile.copyWith(
+          isBlocked: false,
+          canViewContent: true,
+        );
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -219,7 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 )
               : null,
           child: NestedScrollView(
-            headerSliverBuilder: (context, innerBoxIsScrolled) {
+            headerSliverBuilder: (_, innerBoxIsScrolled) {
           return [
             SliverAppBar(
               pinned: false,
@@ -252,6 +317,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
               actions: [
+                if (_isOwnProfile && (_currentProfile.isAdmin || (AuthService().currentUser?.isAdmin ?? false)))
+                  IconButton(
+                    tooltip: 'Panel de Moderación',
+                    icon: Icon(Icons.shield_outlined, color: colorScheme.primary),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const AdminModerationScreen()),
+                      );
+                    },
+                  ),
                 IconButton(
                   tooltip: 'Compartir perfil',
                   icon: const Icon(Icons.share_outlined),
@@ -290,6 +365,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     tooltip: 'Cerrar sesión',
                     icon: Icon(Icons.logout_rounded, color: colorScheme.error),
                     onPressed: _handleLogout,
+                  ),
+                if (!_isOwnProfile)
+                  PopupMenuButton<String>(
+                    tooltip: 'Más opciones',
+                    icon: const Icon(Icons.more_vert_rounded),
+                    onSelected: (val) {
+                      if (val == 'report') {
+                        showReportContentDialog(
+                          context,
+                          userId: _currentProfile.id,
+                          targetTitle: 'usuario',
+                        );
+                      } else if (val == 'block') {
+                        _handleBlockUser();
+                      } else if (val == 'unblock') {
+                        _handleUnblockUser();
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'report',
+                        child: Row(
+                          children: [
+                            Icon(Icons.flag_outlined, size: 18),
+                            SizedBox(width: 8),
+                            Text('Reportar usuario'),
+                          ],
+                        ),
+                      ),
+                      if (_currentProfile.isBlocked)
+                        const PopupMenuItem(
+                          value: 'unblock',
+                          child: Row(
+                            children: [
+                              Icon(Icons.check_circle_outline_rounded, size: 18),
+                              SizedBox(width: 8),
+                              Text('Desbloquear usuario'),
+                            ],
+                          ),
+                        )
+                      else
+                        PopupMenuItem(
+                          value: 'block',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.block_rounded, size: 18, color: Colors.redAccent),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Bloquear a @${_currentProfile.username}',
+                                style: const TextStyle(color: Colors.redAccent),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
               ],
             ),

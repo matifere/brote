@@ -255,18 +255,18 @@ class _ChatsSidebarState extends State<ChatsSidebar> {
                             final avatarUrl = chat.avatarUrl;
                             final displayName = chat.displayName;
 
-                            return Container(
-                              margin: const EdgeInsets.symmetric(vertical: 2),
-                              decoration: BoxDecoration(
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Material(
                                 color: isSelected
                                     ? colorScheme.primaryContainer.withValues(alpha: 0.35)
                                     : Colors.transparent,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: ListTile(
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                                leading: CircleAvatar(
+                                clipBehavior: Clip.antiAlias,
+                                child: ListTile(
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                                  leading: CircleAvatar(
                                   radius: 20,
                                   backgroundColor: colorScheme.primaryContainer,
                                   backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
@@ -363,7 +363,8 @@ class _ChatsSidebarState extends State<ChatsSidebar> {
                                 ),
                                 onTap: () => widget.onSelectChat(chat),
                               ),
-                            );
+                            ),
+                          );
                           },
                         ),
             ),
