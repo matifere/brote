@@ -3,6 +3,7 @@ import 'models/user_profile.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_navigation_screen.dart';
 import 'services/auth_service.dart';
+import 'services/message_notification_service.dart';
 import 'services/theme_service.dart';
 import 'theme/brote_theme.dart';
 import 'widgets/brote_logo.dart';
@@ -11,10 +12,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Restore the saved light/dark choice before the first frame to avoid a flash
   await ThemeService().load();
+  await MessageNotificationService().init();
   runApp(const BroteApp());
 }
 
 class BroteApp extends StatelessWidget {
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
   const BroteApp({super.key});
 
   @override
@@ -22,6 +26,7 @@ class BroteApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: ThemeService().mode,
       builder: (context, themeMode, _) => MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'Brote',
         debugShowCheckedModeBanner: false,
         themeMode: themeMode,

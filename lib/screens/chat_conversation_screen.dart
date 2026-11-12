@@ -8,6 +8,7 @@ import '../models/chat_message.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/chat_crypto.dart';
+import '../services/message_notification_service.dart';
 import '../widgets/chat_password_dialog.dart';
 import '../widgets/chats_sidebar.dart';
 import '../widgets/full_screen_image_viewer.dart';
@@ -57,6 +58,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _activeConversationId = widget.conversationId;
     _activeOtherParticipant = widget.otherParticipant;
     _otherParticipant = widget.otherParticipant;
+    MessageNotificationService().activeConversationId = widget.conversationId;
     ChatCrypto().status.addListener(_onCryptoStatusChanged);
     _loadMessages();
     _prepareEncryption();
@@ -74,6 +76,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       _activeConversationId = widget.conversationId;
       _activeOtherParticipant = widget.otherParticipant;
       _otherParticipant = widget.otherParticipant;
+      MessageNotificationService().activeConversationId = widget.conversationId;
       _messages.clear();
       _isLoading = true;
       _conversationKey = null;
@@ -86,6 +89,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   void dispose() {
     _pollingTimer?.cancel();
+    if (MessageNotificationService().activeConversationId == widget.conversationId) {
+      MessageNotificationService().activeConversationId = null;
+    }
     ChatCrypto().status.removeListener(_onCryptoStatusChanged);
     _inputFocusNode.dispose();
     _messageController.dispose();

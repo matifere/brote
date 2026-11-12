@@ -10,6 +10,7 @@ dependencies:
   cryptography: ^2.9.0
   flutter:
     sdk: flutter
+  flutter_local_notifications: ^23.0.1
   flutter_markdown_plus: ^1.0.12
   google_fonts: ^9.0.0
   http: ^1.6.0
