@@ -1183,6 +1183,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final post = _userPosts[index];
           return PostCard(
             post: post,
+            contextPosts: _userPosts,
             onAuthorTap: () {},
           );
         },

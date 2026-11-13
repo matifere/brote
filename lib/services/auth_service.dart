@@ -11,6 +11,7 @@ import '../models/post_item.dart';
 import '../models/report_item.dart';
 import '../models/user_profile.dart';
 import 'chat_crypto.dart';
+import 'media_optimizer.dart';
 import 'message_notification_service.dart';
 
 class SessionStorage {
@@ -760,13 +761,21 @@ class AuthService {
     }
 
     try {
+      final optimized = await MediaOptimizer.optimizeImage(
+        Uint8List.fromList(imageBytes),
+        maxWidth: 512,
+        maxHeight: 512,
+        quality: 80,
+        filename: filename,
+      );
+
       final uri = Uri.parse('$baseUrl/api/profile/avatar');
       final request = http.MultipartRequest('POST', uri)
         ..headers['Authorization'] = 'Bearer $token'
         ..files.add(http.MultipartFile.fromBytes(
           'file',
-          imageBytes,
-          filename: filename,
+          optimized.bytes,
+          filename: optimized.filename,
         ));
 
       final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
@@ -800,13 +809,21 @@ class AuthService {
     }
 
     try {
+      final optimized = await MediaOptimizer.optimizeImage(
+        Uint8List.fromList(imageBytes),
+        maxWidth: 1280,
+        maxHeight: 720,
+        quality: 80,
+        filename: filename,
+      );
+
       final uri = Uri.parse('$baseUrl/api/profile/banner');
       final request = http.MultipartRequest('POST', uri)
         ..headers['Authorization'] = 'Bearer $token'
         ..files.add(http.MultipartFile.fromBytes(
           'file',
-          imageBytes,
-          filename: filename,
+          optimized.bytes,
+          filename: optimized.filename,
         ));
 
       final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
@@ -874,7 +891,7 @@ class AuthService {
     return [];
   }
 
-  /// Uploads post image from device to Neon Object Storage
+  /// Uploads post image from device to Neon Object Storage with client-side compression
   Future<String?> uploadPostImage(
     List<int> imageBytes, {
     String filename = 'post.jpg',
@@ -883,13 +900,21 @@ class AuthService {
     if (token == null) return null;
 
     try {
+      final optimized = await MediaOptimizer.optimizeImage(
+        Uint8List.fromList(imageBytes),
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 78,
+        filename: filename,
+      );
+
       final uri = Uri.parse('$baseUrl/api/posts/upload-image');
       final request = http.MultipartRequest('POST', uri)
         ..headers['Authorization'] = 'Bearer $token'
         ..files.add(http.MultipartFile.fromBytes(
           'file',
-          imageBytes,
-          filename: filename,
+          optimized.bytes,
+          filename: optimized.filename,
         ));
 
       final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
@@ -905,13 +930,47 @@ class AuthService {
     return null;
   }
 
+  /// Uploads post video from device to Neon Object Storage
+  Future<String?> uploadPostVideo(
+    List<int> videoBytes, {
+    String filename = 'video.mp4',
+  }) async {
+    final token = _sessionToken;
+    if (token == null) return null;
+
+    try {
+      final uri = Uri.parse('$baseUrl/api/posts/upload-video');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..files.add(http.MultipartFile.fromBytes(
+          'file',
+          videoBytes,
+          filename: filename,
+        ));
+
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 60));
+      final response = await http.Response.fromStream(streamedResponse);
+      final Map<String, dynamic> data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data['videoUrl'] as String?;
+      } else {
+        lastCreatePostError = data['error'] as String?;
+      }
+    } catch (e) {
+      debugPrint('Error uploading post video: $e');
+    }
+    return null;
+  }
+
   String? lastCreatePostError;
 
-  /// Creates a new publication (plain text, markdown, images or text with images)
+  /// Creates a new publication (plain text, markdown, images, video or text with media)
   Future<PostItem?> createPost({
     String? content,
     String? imageUrl,
     List<String>? imageUrls,
+    String? videoUrl,
     bool isSensitive = false,
   }) async {
     lastCreatePostError = null;
@@ -938,6 +997,7 @@ class AuthService {
           'content': content?.trim(),
           'imageUrl': primaryImage,
           'imageUrls': resolvedImages,
+          'videoUrl': videoUrl?.trim(),
           'isSensitive': isSensitive,
         }),
       ).timeout(const Duration(seconds: 15));
@@ -1210,7 +1270,7 @@ class AuthService {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -1287,7 +1347,7 @@ class AuthService {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -1311,7 +1371,7 @@ class AuthService {
     return null;
   }
 
-  /// Sends a message in a conversation (handles privacy restrictions)
+  /// Sends a message in a conversation (handles privacy restrictions and auto-retries on cold start)
   Future<Map<String, dynamic>> sendMessage(
     String conversationId, {
     String? content,
@@ -1322,41 +1382,51 @@ class AuthService {
       return {'success': false, 'error': 'Sesión no iniciada'};
     }
 
-    try {
-      final uri = Uri.parse('$baseUrl/api/chats/$conversationId/messages');
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'content': content?.trim(),
-          'mediaUrl': mediaUrl?.trim(),
-        }),
-      ).timeout(const Duration(seconds: 12));
+    final uri = Uri.parse('$baseUrl/api/chats/$conversationId/messages');
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+    };
+    final body = jsonEncode({
+      'content': content?.trim(),
+      'mediaUrl': mediaUrl?.trim(),
+    });
 
-      final Map<String, dynamic> data = jsonDecode(response.body);
-      if (response.statusCode == 200 && data['success'] == true && data['message'] != null) {
-        chatsRefreshNotifier.value++;
-        return {
-          'success': true,
-          'message': ChatMessage.fromJson(data['message'] as Map<String, dynamic>),
-        };
-      } else {
-        return {
-          'success': false,
-          'error': data['error'] as String? ?? 'Error al enviar el mensaje',
-          'isPrivateRestricted': data['isPrivateRestricted'] as bool? ?? false,
-        };
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await http
+            .post(uri, headers: headers, body: body)
+            .timeout(const Duration(seconds: 25));
+
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (response.statusCode == 200 && data['success'] == true && data['message'] != null) {
+          chatsRefreshNotifier.value++;
+          return {
+            'success': true,
+            'message': ChatMessage.fromJson(data['message'] as Map<String, dynamic>),
+          };
+        } else {
+          return {
+            'success': false,
+            'error': data['error'] as String? ?? 'Error al enviar el mensaje',
+            'isPrivateRestricted': data['isPrivateRestricted'] as bool? ?? false,
+          };
+        }
+      } catch (e) {
+        if (attempt == 0) {
+          debugPrint('Attempt $attempt sending message failed ($e), retrying after short wait...');
+          await Future<void>.delayed(const Duration(milliseconds: 600));
+          continue;
+        }
+        debugPrint('Error sending message: $e');
+        return {'success': false, 'error': 'Error de conexión: $e'};
       }
-    } catch (e) {
-      debugPrint('Error sending message: $e');
-      return {'success': false, 'error': 'Error de conexión: $e'};
     }
+
+    return {'success': false, 'error': 'Error de conexión al enviar el mensaje'};
   }
 
-  /// Uploads an image attached to a chat to Neon Object Storage
+  /// Uploads an image attached to a chat to Neon Object Storage with client-side compression
   Future<String?> uploadChatImage(
     List<int> imageBytes, {
     String filename = 'chat.jpg',
@@ -1365,13 +1435,21 @@ class AuthService {
     if (token == null) return null;
 
     try {
+      final optimized = await MediaOptimizer.optimizeImage(
+        Uint8List.fromList(imageBytes),
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 78,
+        filename: filename,
+      );
+
       final uri = Uri.parse('$baseUrl/api/chats/upload-image');
       final request = http.MultipartRequest('POST', uri)
         ..headers['Authorization'] = 'Bearer $token'
         ..files.add(http.MultipartFile.fromBytes(
           'file',
-          imageBytes,
-          filename: filename,
+          optimized.bytes,
+          filename: optimized.filename,
         ));
 
       final streamedResponse = await request.send().timeout(const Duration(seconds: 30));

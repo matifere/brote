@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:brote/models/chat_message.dart';
 import 'package:brote/services/chat_crypto.dart';
 
 void main() {
@@ -80,6 +81,99 @@ void main() {
       final roundTrip = SecureChatPayload.fromJson(jsonDecode(jsonEncode(payload.toJson())) as Map<String, dynamic>);
       expect(roundTrip.image?.url, 'https://x/y');
       expect(roundTrip.preview, '📷 Foto');
+    });
+
+    test('reply citations are encrypted and decrypted end-to-end', () async {
+      final ana = await ChatCipher.newKeyPair();
+      final beto = await ChatCipher.newKeyPair();
+      final anaKey = await ChatCipher.conversationKey(
+        myKeyPair: ana,
+        theirPublicKey: (await beto.extractPublicKey()).bytes,
+        conversationId: 'conv-reply-1',
+      );
+      final betoKey = await ChatCipher.conversationKey(
+        myKeyPair: beto,
+        theirPublicKey: (await ana.extractPublicKey()).bytes,
+        conversationId: 'conv-reply-1',
+      );
+
+      const reply = ChatMessageReply(
+        id: 'msg-original-42',
+        senderId: 'user-beto',
+        senderName: 'Beto',
+        text: '¿A qué hora nos juntamos?',
+      );
+
+      final payload = const SecureChatPayload(
+        text: 'A las 8pm en la esquina',
+        reply: reply,
+      );
+
+      // JSON serialization round-trip
+      final jsonRoundTrip = SecureChatPayload.fromJson(
+        jsonDecode(jsonEncode(payload.toJson())) as Map<String, dynamic>,
+      );
+      expect(jsonRoundTrip.text, 'A las 8pm en la esquina');
+      expect(jsonRoundTrip.reply?.id, 'msg-original-42');
+      expect(jsonRoundTrip.reply?.senderName, 'Beto');
+      expect(jsonRoundTrip.reply?.text, '¿A qué hora nos juntamos?');
+
+      // Encryption and decryption round-trip
+      final encrypted = await ChatCipher.encryptPayload(payload, anaKey);
+      expect(encrypted, startsWith(ChatCipher.prefix));
+      expect(encrypted.contains('8pm'), isFalse);
+      expect(encrypted.contains('juntamos'), isFalse);
+
+      final decrypted = await ChatCipher.decryptPayload(encrypted, betoKey);
+      expect(decrypted, isNotNull);
+      expect(decrypted!.text, 'A las 8pm en la esquina');
+      expect(decrypted.reply, isNotNull);
+      expect(decrypted.reply!.id, 'msg-original-42');
+      expect(decrypted.reply!.senderId, 'user-beto');
+      expect(decrypted.reply!.senderName, 'Beto');
+      expect(decrypted.reply!.text, '¿A qué hora nos juntamos?');
+    });
+
+    test('GIF messages are encrypted and decrypted in SecureChatPayload', () async {
+      final ana = await ChatCipher.newKeyPair();
+      final beto = await ChatCipher.newKeyPair();
+      final anaKey = await ChatCipher.conversationKey(
+        myKeyPair: ana,
+        theirPublicKey: (await beto.extractPublicKey()).bytes,
+        conversationId: 'conv-gif-1',
+      );
+      final betoKey = await ChatCipher.conversationKey(
+        myKeyPair: beto,
+        theirPublicKey: (await ana.extractPublicKey()).bytes,
+        conversationId: 'conv-gif-1',
+      );
+
+      const payload = SecureChatPayload(
+        text: 'Mira este meme',
+        gifUrl: 'https://media.giphy.com/media/test/giphy.gif',
+      );
+
+      // Serialization and preview check
+      final jsonRoundTrip = SecureChatPayload.fromJson(
+        jsonDecode(jsonEncode(payload.toJson())) as Map<String, dynamic>,
+      );
+      expect(jsonRoundTrip.text, 'Mira este meme');
+      expect(jsonRoundTrip.gifUrl, 'https://media.giphy.com/media/test/giphy.gif');
+
+      const gifOnlyPayload = SecureChatPayload(
+        gifUrl: 'https://media.giphy.com/media/test/giphy.gif',
+      );
+      expect(gifOnlyPayload.preview, '👾 GIF');
+
+      // Encryption and decryption round-trip
+      final encrypted = await ChatCipher.encryptPayload(payload, anaKey);
+      expect(encrypted, startsWith(ChatCipher.prefix));
+      expect(encrypted.contains('giphy.gif'), isFalse);
+
+      final decrypted = await ChatCipher.decryptPayload(encrypted, betoKey);
+      expect(decrypted, isNotNull);
+      expect(decrypted!.text, 'Mira este meme');
+      expect(decrypted.gifUrl, 'https://media.giphy.com/media/test/giphy.gif');
     });
 
     test('the password backup restores the same key pair', () async {

@@ -9,7 +9,10 @@ import '../screens/post_comments_screen.dart';
 import '../screens/profile_screen.dart';
 import '../services/auth_service.dart';
 import '../services/catalog_service.dart';
+import '../services/video_cache_service.dart';
 import 'full_screen_image_viewer.dart';
+import 'full_screen_media_feed_viewer.dart';
+import 'post_video_player.dart';
 import 'rating_stars.dart';
 import 'report_dialog.dart';
 
@@ -20,11 +23,15 @@ class PostCard extends StatefulWidget {
   /// False inside the comments screen, where the comments are already shown.
   final bool showCommentsButton;
 
+  /// Optional full list of feed posts to enable TikTok/Instagram style vertical swipe in fullscreen
+  final List<PostItem>? contextPosts;
+
   const PostCard({
     super.key,
     required this.post,
     this.onAuthorTap,
     this.showCommentsButton = true,
+    this.contextPosts,
   });
 
   @override
@@ -46,6 +53,9 @@ class _PostCardState extends State<PostCard> {
     _likesCount = widget.post.likesCount;
     _commentsCount = widget.post.commentsCount;
     _loadPosterIfNeeded();
+    if (widget.post.videoUrl != null && widget.post.videoUrl!.isNotEmpty) {
+      VideoCacheService.instance.preload(widget.post.videoUrl!);
+    }
   }
 
   @override
@@ -58,6 +68,11 @@ class _PostCardState extends State<PostCard> {
       _likesCount = widget.post.likesCount;
       _commentsCount = widget.post.commentsCount;
       _loadPosterIfNeeded();
+      if (widget.post.videoUrl != null &&
+          widget.post.videoUrl!.isNotEmpty &&
+          widget.post.videoUrl != oldWidget.post.videoUrl) {
+        VideoCacheService.instance.preload(widget.post.videoUrl!);
+      }
     }
   }
 
@@ -127,6 +142,26 @@ class _PostCardState extends State<PostCard> {
         content: Text(blocked ? 'Usuario bloqueado.' : 'No se pudo bloquear al usuario.'),
         behavior: SnackBarBehavior.floating,
       ),
+    );
+  }
+
+  void _openFullScreenMedia({int initialMediaIndex = 0}) {
+    if (widget.post.videoUrl != null && widget.post.videoUrl!.isNotEmpty) {
+      VideoCacheService.instance.preload(widget.post.videoUrl!);
+    }
+    openFullScreenMediaFeed(
+      context,
+      initialPost: widget.post,
+      contextPosts: widget.contextPosts,
+      initialMediaIndex: initialMediaIndex,
+      onPostUpdated: (updatedPost) {
+        if (!mounted) return;
+        setState(() {
+          _isLiked = updatedPost.isLiked;
+          _likesCount = updatedPost.likesCount;
+          _commentsCount = updatedPost.commentsCount;
+        });
+      },
     );
   }
 
@@ -465,8 +500,16 @@ class _PostCardState extends State<PostCard> {
                     ),
                   ),
 
-                // Post Media Attachment(s) (skip if already displayed as movie poster in review)
-                if (postImages.isNotEmpty) ...[
+                // Post Media Attachment(s) (video player or images grid)
+                if (widget.post.videoUrl != null && widget.post.videoUrl!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  PostVideoPlayer(
+                    videoUrl: widget.post.videoUrl!,
+                    isSensitive: widget.post.isSensitive,
+                    autoPlay: true,
+                    onFullScreenRequested: () => _openFullScreenMedia(),
+                  ),
+                ] else if (postImages.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   if (widget.post.isSensitive && !_revealedSensitive)
                     _buildSensitiveMediaCover(postImages, colorScheme)
@@ -570,7 +613,7 @@ class _PostCardState extends State<PostCard> {
     final isMovie = review.category == RatingCategory.movie;
     final posterUrl = isMovie ? (_moviePosterUrl ?? widget.post.imageUrl) : null;
     final hasPoster = posterUrl != null && posterUrl.isNotEmpty;
-    final heroTag = 'review-poster-${widget.post.id}';
+    final heroTag = 'review-poster-${widget.post.id}-${identityHashCode(widget)}';
 
     Widget posterBox = Container(
       width: hasPoster ? 48 : 40,
@@ -737,16 +780,11 @@ class _PostCardState extends State<PostCard> {
     if (images.isEmpty) return const SizedBox.shrink();
 
     if (images.length == 1) {
+      final heroTag = 'post-image-${widget.post.id}-0-${identityHashCode(widget)}';
       return GestureDetector(
-        onTap: () => openFullScreenImage(
-          context,
-          imageUrl: images[0],
-          imageUrls: images,
-          initialIndex: 0,
-          heroTag: 'post-image-${widget.post.id}-0',
-        ),
+        onTap: () => _openFullScreenMedia(initialMediaIndex: 0),
         child: Hero(
-          tag: 'post-image-${widget.post.id}-0',
+          tag: heroTag,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
             child: Container(
@@ -837,12 +875,7 @@ class _PostCardState extends State<PostCard> {
                         _buildGridItem(images, 3, colorScheme),
                         if (extraCount > 0)
                           GestureDetector(
-                            onTap: () => openFullScreenImage(
-                              context,
-                              imageUrls: images,
-                              initialIndex: 3,
-                              heroTag: 'post-image-${widget.post.id}-3',
-                            ),
+                            onTap: () => _openFullScreenMedia(initialMediaIndex: 3),
                             child: Container(
                               color: Colors.black.withValues(alpha: 0.65),
                               alignment: Alignment.center,
@@ -870,14 +903,9 @@ class _PostCardState extends State<PostCard> {
 
   Widget _buildGridItem(List<String> images, int index, ColorScheme colorScheme) {
     final url = images[index];
-    final heroTag = 'post-image-${widget.post.id}-$index';
+    final heroTag = 'post-image-${widget.post.id}-$index-${identityHashCode(widget)}';
     return GestureDetector(
-      onTap: () => openFullScreenImage(
-        context,
-        imageUrls: images,
-        initialIndex: index,
-        heroTag: heroTag,
-      ),
+      onTap: () => _openFullScreenMedia(initialMediaIndex: index),
       child: Hero(
         tag: heroTag,
         child: Container(

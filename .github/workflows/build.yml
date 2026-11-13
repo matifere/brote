@@ -1,0 +1,323 @@
+name: Build & Release Multiplatform
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # =========================================================================
+  # 1. Quality & Static Analysis
+  # =========================================================================
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze project
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run unit & widget tests
+        run: flutter test
+
+  # =========================================================================
+  # 2. Android Build (APK & AAB)
+  # =========================================================================
+  build-android:
+    name: Build Android (APK & AAB)
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      - name: Build Android App Bundle (AAB)
+        run: flutter build appbundle --release
+
+      - name: Prepare Android artifacts
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/brote-android-release.apk
+          cp build/app/outputs/bundle/release/app-release.aab dist/brote-android-bundle.aab
+
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: brote-android
+          path: dist/*
+          if-no-files-found: error
+
+  # =========================================================================
+  # 3. Web Build
+  # =========================================================================
+  build-web:
+    name: Build Web
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Web
+        run: flutter build web --release
+
+      - name: Prepare Web archive
+        run: |
+          mkdir -p dist
+          cd build/web && zip -r ../../dist/brote-web.zip .
+
+      - name: Upload Web Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brote-web
+          path: dist/brote-web.zip
+          if-no-files-found: error
+
+  # =========================================================================
+  # 4. Linux Build
+  # =========================================================================
+  build-linux:
+    name: Build Linux (x64)
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libgtk-3-dev \
+            liblzma-dev \
+            libmpv-dev \
+            mpv
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux Desktop
+        run: flutter build linux --release
+
+      - name: Prepare Linux archive
+        run: |
+          mkdir -p dist
+          cd build/linux/x64/release/bundle
+          tar -czvf ../../../../../dist/brote-linux-x64.tar.gz .
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brote-linux-x64
+          path: dist/brote-linux-x64.tar.gz
+          if-no-files-found: error
+
+  # =========================================================================
+  # 5. Windows Build
+  # =========================================================================
+  build-windows:
+    name: Build Windows (x64)
+    needs: lint-and-test
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows Desktop
+        run: flutter build windows --release
+
+      - name: Prepare Windows archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath dist\brote-windows-x64.zip
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brote-windows-x64
+          path: dist/brote-windows-x64.zip
+          if-no-files-found: error
+
+  # =========================================================================
+  # 6. macOS Build
+  # =========================================================================
+  build-macos:
+    name: Build macOS
+    needs: lint-and-test
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS Desktop
+        run: flutter build macos --release --no-codesign
+
+      - name: Prepare macOS archive
+        run: |
+          mkdir -p dist
+          cd build/macos/Build/Products/Release
+          zip -r -y ../../../../../dist/brote-macos.zip brote.app
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brote-macos
+          path: dist/brote-macos.zip
+          if-no-files-found: error
+
+  # =========================================================================
+  # 7. iOS Build (Unsigned IPA)
+  # =========================================================================
+  build-ios:
+    name: Build iOS (Unsigned)
+    needs: lint-and-test
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS Application
+        run: flutter build ios --release --no-codesign
+
+      - name: Prepare iOS IPA archive
+        run: |
+          mkdir -p dist Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r -y dist/brote-ios-unsigned.ipa Payload
+
+      - name: Upload iOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brote-ios
+          path: dist/brote-ios-unsigned.ipa
+          if-no-files-found: error
+
+  # =========================================================================
+  # 8. Automated GitHub Release (on tag v*)
+  # =========================================================================
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-android
+      - build-web
+      - build-linux
+      - build-windows
+      - build-macos
+      - build-ios
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Collect release binaries
+        run: |
+          mkdir -p release-assets
+          find all-artifacts -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.ipa" \) -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

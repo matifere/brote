@@ -4,6 +4,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/chat_message.dart';
 import 'auth_service.dart';
 
 /// A photo sent in an encrypted chat: the uploaded file holds only ciphertext,
@@ -24,21 +25,36 @@ class SecureChatImage {
 class SecureChatPayload {
   final String text;
   final SecureChatImage? image;
+  final String? gifUrl;
+  final ChatMessageReply? reply;
 
-  const SecureChatPayload({this.text = '', this.image});
+  const SecureChatPayload({
+    this.text = '',
+    this.image,
+    this.gifUrl,
+    this.reply,
+  });
 
   /// Text for the inbox, matching what the server shows for plain messages.
-  String get preview => text.isNotEmpty ? text : (image != null ? '📷 Foto' : '');
+  String get preview => text.isNotEmpty
+      ? text
+      : (gifUrl != null
+          ? '👾 GIF'
+          : (image != null ? '📷 Foto' : ''));
 
   Map<String, dynamic> toJson() => {
         'v': 1,
         if (text.isNotEmpty) 't': text,
         if (image != null) 'img': image!.toJson(),
+        if (gifUrl != null && gifUrl!.isNotEmpty) 'gif': gifUrl,
+        if (reply != null) 'rep': reply!.toJson(),
       };
 
   factory SecureChatPayload.fromJson(Map<String, dynamic> json) => SecureChatPayload(
         text: json['t'] as String? ?? '',
         image: json['img'] is Map<String, dynamic> ? SecureChatImage.fromJson(json['img']) : null,
+        gifUrl: json['gif'] as String?,
+        reply: json['rep'] is Map<String, dynamic> ? ChatMessageReply.fromJson(json['rep']) : null,
       );
 }
 
@@ -438,8 +454,8 @@ class ChatCrypto {
       final uri = Uri.parse('${AuthService().baseUrl}$path');
       final headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'};
       final response = method == 'PUT'
-          ? await http.put(uri, headers: headers, body: jsonEncode(body)).timeout(const Duration(seconds: 12))
-          : await http.get(uri, headers: headers).timeout(const Duration(seconds: 12));
+          ? await http.put(uri, headers: headers, body: jsonEncode(body)).timeout(const Duration(seconds: 25))
+          : await http.get(uri, headers: headers).timeout(const Duration(seconds: 25));
       if (response.statusCode != 200) return null;
       final data = jsonDecode(response.body);
       return data is Map<String, dynamic> && data['success'] == true ? data : null;

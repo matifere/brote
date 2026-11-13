@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Brote necesita acceso a tu galería para adjuntar fotos y videos a tus publicaciones y mensajes.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Brote necesita acceso a tu cámara para tomar fotos y videos directamente desde la app.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Brote necesita acceso a tu micrófono para grabar videos con audio.</string>
 </dict>
 </plist>

@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import '../models/chat_message.dart';
@@ -12,6 +12,7 @@ import '../services/message_notification_service.dart';
 import '../widgets/chat_password_dialog.dart';
 import '../widgets/chats_sidebar.dart';
 import '../widgets/full_screen_image_viewer.dart';
+import '../widgets/giphy_picker_sheet.dart';
 import 'profile_screen.dart';
 
 class ChatConversationScreen extends StatefulWidget {
@@ -51,6 +52,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   final Map<String, SecureChatPayload> _decrypted = {};
   final Set<String> _undecryptable = {};
   final Map<String, Future<Uint8List?>> _secureImages = {};
+
+  // Reply state (WhatsApp-style quote & reply)
+  ChatMessage? _replyingToMessage;
+  String? _replyingToText;
+  String? _highlightedMessageId;
 
   @override
   void initState() {
@@ -236,13 +242,147 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     });
   }
 
-  Future<void> _handleSendMessage({String? mediaUrl, SecureChatImage? secureImage}) async {
+  void _startReply(ChatMessage msg) {
+    final payload = _decrypted[msg.id];
+    final isEncrypted = ChatCipher.isEncrypted(msg.content);
+    String rawText = isEncrypted ? (payload?.text ?? '') : msg.content;
+    if (rawText.isEmpty) {
+      if (payload?.gifUrl != null || msg.isGif) {
+        rawText = '👾 GIF';
+      } else if ((msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) || payload?.image != null) {
+        rawText = '📷 Foto';
+      }
+    }
+    setState(() {
+      _replyingToMessage = msg;
+      _replyingToText = rawText;
+    });
+    _inputFocusNode.requestFocus();
+  }
+
+  void _cancelReply() {
+    setState(() {
+      _replyingToMessage = null;
+      _replyingToText = null;
+    });
+  }
+
+  void _scrollToMessage(String messageId) {
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx >= 0) {
+      setState(() => _highlightedMessageId = messageId);
+      if (_scrollController.hasClients) {
+        final total = _messages.length;
+        if (total > 0) {
+          final target = (_scrollController.position.maxScrollExtent * (idx / total))
+              .clamp(0.0, _scrollController.position.maxScrollExtent);
+          _scrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeInOutCubic,
+          );
+        }
+      }
+      Future.delayed(const Duration(milliseconds: 1400), () {
+        if (mounted && _highlightedMessageId == messageId) {
+          setState(() => _highlightedMessageId = null);
+        }
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El mensaje citado no se encuentra en esta vista.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _showMessageContextMenu(ChatMessage msg) {
+    final isMe = msg.isMe;
+    final payload = _decrypted[msg.id];
+    final isEncrypted = ChatCipher.isEncrypted(msg.content);
+    final text = isEncrypted ? (payload?.text ?? '') : msg.content;
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.reply_rounded),
+              title: const Text('Responder'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _startReply(msg);
+              },
+            ),
+            if (text.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.copy_rounded),
+                title: const Text('Copiar texto'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  Clipboard.setData(ClipboardData(text: text));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Mensaje copiado al portapapeles')),
+                  );
+                },
+              ),
+            if (!isMe)
+              ListTile(
+                leading: const Icon(Icons.person_outline_rounded),
+                title: Text('Ver perfil de ${msg.senderName}'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _openParticipantProfile();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleSendMessage({String? mediaUrl, SecureChatImage? secureImage, String? gifUrl}) async {
     if (_isSending) return;
     final text = _messageController.text.trim();
-    if (text.isEmpty && mediaUrl == null && secureImage == null) return;
+    if (text.isEmpty && mediaUrl == null && secureImage == null && gifUrl == null) return;
 
     _messageController.clear();
     setState(() => _isSending = true);
+
+    // Save reply to send and clear reply preview
+    ChatMessageReply? replyData;
+    if (_replyingToMessage != null) {
+      final myUser = AuthService().currentUser;
+      final senderName = _replyingToMessage!.isMe
+          ? (myUser?.displayName ?? 'Vos')
+          : _replyingToMessage!.senderName;
+      replyData = ChatMessageReply(
+        id: _replyingToMessage!.id,
+        senderId: _replyingToMessage!.senderId.isNotEmpty
+            ? _replyingToMessage!.senderId
+            : (myUser?.id ?? ''),
+        senderName: senderName,
+        text: _replyingToText ?? '',
+        mediaUrl: _replyingToMessage!.mediaUrl,
+      );
+      _cancelReply();
+    }
 
     // Ensure conversation key is ready; messages are strictly end-to-end encrypted
     var key = _conversationKey;
@@ -262,13 +402,18 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       return;
     }
 
-    final payload = SecureChatPayload(text: text, image: secureImage);
+    final payload = SecureChatPayload(
+      text: text,
+      image: secureImage,
+      gifUrl: gifUrl,
+      reply: replyData,
+    );
     final content = await ChatCipher.encryptPayload(payload, key);
 
     final res = await AuthService().sendMessage(
       widget.conversationId,
       content: content,
-      mediaUrl: mediaUrl,
+      mediaUrl: gifUrl ?? mediaUrl,
     );
 
     if (!mounted) return;
@@ -412,6 +557,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                     _pickAndSendImage(ImageSource.camera);
                   },
                 ),
+                ListTile(
+                  leading: const Icon(Icons.gif_box_rounded),
+                  title: const Text('Buscar en GIPHY'),
+                  subtitle: const Text('GIFs animados y tendencias'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _openGiphyPicker();
+                  },
+                ),
               ],
             ),
           ),
@@ -420,8 +574,108 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     );
   }
 
+  Future<void> _openGiphyPicker() async {
+    final gifUrl = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => const GiphyPickerSheet(),
+    );
+
+    if (gifUrl != null && gifUrl.isNotEmpty && mounted) {
+      await _handleSendMessage(gifUrl: gifUrl);
+    }
+  }
+
   static const double _thumbnailMaxWidth = 220;
   static const double _thumbnailMaxHeight = 280;
+
+  Widget _buildGifThumbnail(String gifUrl, ChatMessage msg, bool isMe, ColorScheme colorScheme) {
+    final heroTag = 'chat-gif-${msg.id}';
+    final placeholderColor = isMe
+        ? colorScheme.onPrimary.withValues(alpha: 0.15)
+        : colorScheme.onSurface.withValues(alpha: 0.08);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.zoomIn,
+      child: GestureDetector(
+        onTap: () => openFullScreenImage(
+          context,
+          imageUrl: gifUrl,
+          heroTag: heroTag,
+          title: msg.isMe ? 'Vos' : msg.senderName,
+          subtitle: msg.timeFormatted.isEmpty ? null : msg.timeFormatted,
+        ),
+        child: Hero(
+          tag: heroTag,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Stack(
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: _thumbnailMaxWidth,
+                    maxHeight: _thumbnailMaxHeight,
+                  ),
+                  child: Image.network(
+                    gifUrl,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) return child;
+                      return Container(
+                        width: 180,
+                        height: 140,
+                        color: placeholderColor,
+                        alignment: Alignment.center,
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            value: progress.expectedTotalBytes != null
+                                ? progress.cumulativeBytesLoaded / progress.expectedTotalBytes!
+                                : null,
+                            color: isMe ? colorScheme.onPrimary : colorScheme.primary,
+                          ),
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      width: 180,
+                      height: 120,
+                      color: placeholderColor,
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.broken_image_rounded),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  bottom: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'GIF',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   /// Small preview inside the bubble, decoded at thumbnail size; tapping it
   /// opens the full-resolution photo.
@@ -562,6 +816,153 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildReplyPreviewBar(ColorScheme colorScheme, TextTheme textTheme) {
+    if (_replyingToMessage == null) return const SizedBox.shrink();
+
+    final isMe = _replyingToMessage!.isMe;
+    final senderTitle = isMe ? 'vos' : _replyingToMessage!.senderName;
+    final snippet = (_replyingToText != null && _replyingToText!.isNotEmpty)
+        ? _replyingToText!
+        : ((_replyingToMessage!.mediaUrl != null && _replyingToMessage!.mediaUrl!.isNotEmpty)
+            ? '📷 Foto'
+            : '');
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.85),
+        border: Border(
+          top: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.4), width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 38,
+            decoration: BoxDecoration(
+              color: colorScheme.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.reply_rounded, size: 14, color: colorScheme.primary),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'Respondiendo a $senderTitle',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  snippet,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 20),
+            tooltip: 'Cancelar respuesta',
+            onPressed: _cancelReply,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuotedReplyBox(
+    ChatMessageReply reply,
+    bool isMe,
+    ColorScheme colorScheme,
+  ) {
+    final myId = AuthService().currentUser?.id;
+    final isReplyToMe = (myId != null && myId.isNotEmpty && reply.senderId == myId) ||
+        (reply.senderName.toLowerCase() == 'vos');
+    final authorLabel = isReplyToMe ? 'Vos' : reply.senderName;
+    final borderColor = isMe ? colorScheme.onPrimary : colorScheme.primary;
+    final bgColor = isMe
+        ? Colors.black.withValues(alpha: 0.16)
+        : colorScheme.primary.withValues(alpha: 0.08);
+
+    return InkWell(
+      onTap: () => _scrollToMessage(reply.id),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(color: borderColor, width: 3.5),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.reply_rounded,
+                  size: 13,
+                  color: isMe ? colorScheme.onPrimary : colorScheme.primary,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    authorLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.bold,
+                      color: isMe ? colorScheme.onPrimary : colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              reply.text.isNotEmpty ? reply.text : (reply.mediaUrl != null ? '📷 Foto' : ''),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: (isMe ? colorScheme.onPrimary : colorScheme.onSurface)
+                    .withValues(alpha: 0.85),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -752,104 +1153,153 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                         final isEncrypted = ChatCipher.isEncrypted(msg.content);
                         final payload = _decrypted[msg.id];
                         final text = isEncrypted ? (payload?.text ?? '') : msg.content;
+                        final reply = payload?.reply ?? msg.reply;
                         final secureImage = payload?.image;
-                        final hasMedia =
-                            (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) || secureImage != null;
+                        final gifUrl = payload?.gifUrl ?? (msg.isGif ? msg.mediaUrl : null);
+                        final isPlainImage = (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty && !msg.isGif);
+                        final hasMedia = isPlainImage || secureImage != null || (gifUrl != null && gifUrl.isNotEmpty);
                         final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
+                        final isHighlighted = _highlightedMessageId == msg.id;
 
-                        return Align(
-                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                          child: Container(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            constraints: BoxConstraints(
-                              maxWidth: (MediaQuery.of(context).size.width * 0.76).clamp(200.0, 480.0),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            decoration: BoxDecoration(
-                              color: isMe
-                                  ? colorScheme.primary
-                                  : colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-                              borderRadius: BorderRadius.only(
-                                topLeft: const Radius.circular(16),
-                                topRight: const Radius.circular(16),
-                                bottomLeft: Radius.circular(isMe ? 16 : 4),
-                                bottomRight: Radius.circular(isMe ? 4 : 16),
+                        return Dismissible(
+                          key: ValueKey('msg_swipe_${msg.id}'),
+                          direction: DismissDirection.startToEnd,
+                          confirmDismiss: (direction) async {
+                            HapticFeedback.lightImpact();
+                            _startReply(msg);
+                            return false;
+                          },
+                          background: Container(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.only(left: 16),
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerHighest,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.reply_rounded,
+                                color: colorScheme.primary,
+                                size: 22,
                               ),
                             ),
-                            child: Column(
-                              crossAxisAlignment:
-                                  isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                              children: [
-                                // Optional Media Image
-                                if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty)
-                                  _buildMediaThumbnail(msg, isMe, colorScheme),
-                                if (secureImage != null)
-                                  _buildSecureThumbnail(msg, secureImage, isMe, colorScheme),
-                                if (hasMedia && text.isNotEmpty) const SizedBox(height: 8),
+                          ),
+                          child: GestureDetector(
+                            onLongPress: () => _showMessageContextMenu(msg),
+                            onSecondaryTap: () => _showMessageContextMenu(msg),
+                            child: Align(
+                              alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                constraints: BoxConstraints(
+                                  maxWidth: (MediaQuery.of(context).size.width * 0.76).clamp(200.0, 480.0),
+                                ),
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                decoration: BoxDecoration(
+                                  color: isMe
+                                      ? colorScheme.primary
+                                      : colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(16),
+                                    topRight: const Radius.circular(16),
+                                    bottomLeft: Radius.circular(isMe ? 16 : 4),
+                                    bottomRight: Radius.circular(isMe ? 4 : 16),
+                                  ),
+                                  border: isHighlighted
+                                      ? Border.all(color: colorScheme.primary, width: 2)
+                                      : null,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                  children: [
+                                    // Quoted Reply (WhatsApp style)
+                                    if (reply != null) ...[
+                                      _buildQuotedReplyBox(reply, isMe, colorScheme),
+                                      const SizedBox(height: 4),
+                                    ],
 
-                                // Encrypted message this device can't read (locked or old keys)
-                                if (isEncrypted && payload == null)
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.lock_outline_rounded,
-                                          size: 14, color: textColor.withValues(alpha: 0.8)),
-                                      const SizedBox(width: 6),
+                                    // Optional GIF
+                                    if (gifUrl != null && gifUrl.isNotEmpty)
+                                      _buildGifThumbnail(gifUrl, msg, isMe, colorScheme),
+
+                                    // Optional Media Image
+                                    if (isPlainImage)
+                                      _buildMediaThumbnail(msg, isMe, colorScheme),
+                                    if (secureImage != null)
+                                      _buildSecureThumbnail(msg, secureImage, isMe, colorScheme),
+                                    if (hasMedia && text.isNotEmpty)
+                                      const SizedBox(height: 8),
+
+                                    // Encrypted message this device can't read (locked or old keys)
+                                    if (isEncrypted && payload == null)
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.lock_outline_rounded,
+                                              size: 14, color: textColor.withValues(alpha: 0.8)),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'Mensaje cifrado',
+                                            style: TextStyle(
+                                              color: textColor.withValues(alpha: 0.8),
+                                              fontSize: 14.5,
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
+                                    // Text content
+                                    if (text.isNotEmpty)
                                       Text(
-                                        'Mensaje cifrado',
+                                        text,
                                         style: TextStyle(
-                                          color: textColor.withValues(alpha: 0.8),
+                                          color: textColor,
                                           fontSize: 14.5,
-                                          fontStyle: FontStyle.italic,
+                                          height: 1.35,
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    const SizedBox(height: 4),
 
-                                // Text content
-                                if (text.isNotEmpty)
-                                  Text(
-                                    text,
-                                    style: TextStyle(
-                                      color: textColor,
-                                      fontSize: 14.5,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                const SizedBox(height: 4),
-
-                                // Timestamp
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (isEncrypted) ...[
-                                      Icon(
-                                        Icons.lock_rounded,
-                                        size: 10,
-                                        color: isMe
-                                            ? colorScheme.onPrimary.withValues(alpha: 0.75)
-                                            : colorScheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(width: 3),
-                                    ],
-                                    Text(
-                                      msg.timeFormatted,
-                                      style: TextStyle(
-                                        color: isMe
-                                            ? colorScheme.onPrimary.withValues(alpha: 0.75)
-                                            : colorScheme.onSurfaceVariant,
-                                        fontSize: 10.5,
-                                      ),
+                                    // Timestamp
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (isEncrypted) ...[
+                                          Icon(
+                                            Icons.lock_rounded,
+                                            size: 10,
+                                            color: isMe
+                                                ? colorScheme.onPrimary.withValues(alpha: 0.75)
+                                                : colorScheme.onSurfaceVariant,
+                                          ),
+                                          const SizedBox(width: 3),
+                                        ],
+                                        Text(
+                                          msg.timeFormatted,
+                                          style: TextStyle(
+                                            color: isMe
+                                                ? colorScheme.onPrimary.withValues(alpha: 0.75)
+                                                : colorScheme.onSurfaceVariant,
+                                            fontSize: 10.5,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
-                              ],
+                              ),
                             ),
                           ),
                         );
                       },
                     ),
         ),
+
+        _buildReplyPreviewBar(colorScheme, textTheme),
 
         // Message input bar
         Container(
@@ -865,6 +1315,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                   icon: Icon(Icons.add_photo_alternate_outlined, color: colorScheme.primary),
                   tooltip: 'Enviar foto',
                   onPressed: _showMediaPickerSheet,
+                ),
+                IconButton(
+                  icon: Icon(Icons.gif_box_outlined, color: colorScheme.primary),
+                  tooltip: 'Buscar GIF (GIPHY)',
+                  onPressed: _openGiphyPicker,
                 ),
                 Expanded(
                   child: TextField(

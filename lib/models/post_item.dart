@@ -10,6 +10,7 @@ class PostItem {
   final String content;
   final String? imageUrl;
   final List<String> imageUrls;
+  final String? videoUrl;
   final DateTime? createdAt;
   int likesCount;
   int commentsCount;
@@ -31,6 +32,7 @@ class PostItem {
     required this.content,
     this.imageUrl,
     this.imageUrls = const [],
+    this.videoUrl,
     this.createdAt,
     this.likesCount = 0,
     this.commentsCount = 0,
@@ -102,6 +104,7 @@ class PostItem {
       content: json['content'] as String? ?? json['text'] as String? ?? '',
       imageUrl: singleUrl ?? (allUrls.isNotEmpty ? allUrls.first : null),
       imageUrls: allUrls,
+      videoUrl: json['videoUrl'] as String? ?? json['video_url'] as String?,
       createdAt: dt,
       likesCount: (json['likesCount'] as num? ?? json['likes_count'] as num? ?? 0).toInt(),
       commentsCount: (json['commentsCount'] as num? ?? json['comments_count'] as num? ?? 0).toInt(),

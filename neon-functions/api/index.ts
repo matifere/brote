@@ -42,7 +42,9 @@ function getPool(): Pool {
     pool = new Pool({
       connectionString: connStr,
       ssl: { rejectUnauthorized: false },
-      max: 5,
+      max: 20,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
     });
     pool.on("error", (err) => console.error("Postgres pool error:", err.message));
   }
@@ -706,26 +708,11 @@ app.post("/api/profile/avatar", async (c) => {
   }
 });
 
-// Serve avatar image from Neon Object Storage
+// Serve avatar image from Neon Object Storage via fast 302 redirect
 app.get("/api/avatar/:key", async (c) => {
-  try {
-    const key = c.req.param("key");
-    const s3 = getS3();
-    const res = await s3.send(
-      new GetObjectCommand({
-        Bucket: "avatars",
-        Key: key,
-      })
-    );
-    const body = await res.Body?.transformToByteArray();
-    if (!body) return c.text("Avatar not found", 404);
-    return c.body(body, 200, {
-      "Content-Type": res.ContentType || "image/jpeg",
-      "Cache-Control": "public, max-age=31536000, immutable",
-    });
-  } catch (err: any) {
-    return c.text("Avatar not found", 404);
-  }
+  const key = c.req.param("key");
+  const storageEndpoint = process.env.AWS_ENDPOINT_URL_S3 || "https://br-spring-base-betng0ba.storage.c-9.us-east-2.aws.neon.tech";
+  return c.redirect(`${storageEndpoint}/avatars/${key}`, 302);
 });
 
 // Upload banner from device to Neon Object Storage
@@ -819,26 +806,11 @@ app.post("/api/profile/banner", async (c) => {
   }
 });
 
-// Serve banner image from Neon Object Storage
+// Serve banner image from Neon Object Storage via fast 302 redirect
 app.get("/api/banner/:key", async (c) => {
-  try {
-    const key = c.req.param("key");
-    const s3 = getS3();
-    const res = await s3.send(
-      new GetObjectCommand({
-        Bucket: "banners",
-        Key: key,
-      })
-    );
-    const body = await res.Body?.transformToByteArray();
-    if (!body) return c.text("Banner not found", 404);
-    return c.body(body, 200, {
-      "Content-Type": res.ContentType || "image/jpeg",
-      "Cache-Control": "public, max-age=31536000, immutable",
-    });
-  } catch (err: any) {
-    return c.text("Banner not found", 404);
-  }
+  const key = c.req.param("key");
+  const storageEndpoint = process.env.AWS_ENDPOINT_URL_S3 || "https://br-spring-base-betng0ba.storage.c-9.us-east-2.aws.neon.tech";
+  return c.redirect(`${storageEndpoint}/banners/${key}`, 302);
 });
 
 // Search profiles by username or displayName
@@ -1195,6 +1167,11 @@ app.post("/api/posts/upload-image", async (c) => {
       return c.json({ success: false, error: "No se recibió ninguna imagen válida." }, 400);
     }
 
+    // Size validation: Max 12 MB for images
+    if (fileBuffer.length > 12 * 1024 * 1024) {
+      return c.json({ success: false, error: "La imagen supera el límite permitido de 12 MB." }, 400);
+    }
+
     if (contentType.includes("png")) fileExt = "png";
     else if (contentType.includes("webp")) fileExt = "webp";
     else if (contentType.includes("gif")) fileExt = "gif";
@@ -1212,9 +1189,8 @@ app.post("/api/posts/upload-image", async (c) => {
       })
     );
 
-    const host = c.req.header("host") || "br-spring-base-betng0ba-api.compute.c-9.us-east-2.aws.neon.tech";
-    const proto = host.includes("localhost") ? "http" : "https";
-    const imageUrl = `${proto}://${host}/api/posts/media/${objectKey}`;
+    const storageEndpoint = process.env.AWS_ENDPOINT_URL_S3 || "https://br-spring-base-betng0ba.storage.c-9.us-east-2.aws.neon.tech";
+    const imageUrl = `${storageEndpoint}/posts/${objectKey}`;
 
     return c.json({
       success: true,
@@ -1226,33 +1202,81 @@ app.post("/api/posts/upload-image", async (c) => {
   }
 });
 
-// Serve post media from Neon Object Storage
-app.get("/api/posts/media/:key", async (c) => {
+// Upload post video to Neon Object Storage
+app.post("/api/posts/upload-video", async (c) => {
   try {
-    const key = c.req.param("key");
+    const auth = await getAuthenticatedUser(c);
+    if (!auth) {
+      return c.json({ success: false, error: "No autorizado o sesión expirada" }, 401);
+    }
+
+    let fileBuffer: Buffer | null = null;
+    let contentType = "video/mp4";
+    let fileExt = "mp4";
+    const reqContentType = c.req.header("content-type") || "";
+
+    if (reqContentType.includes("multipart/form-data")) {
+      const body = await c.req.parseBody();
+      const file = body["file"] || body["video"];
+      if (file && typeof file === "object" && "arrayBuffer" in file) {
+        const ab = await (file as any).arrayBuffer();
+        fileBuffer = Buffer.from(ab);
+        contentType = (file as any).type || "video/mp4";
+      }
+    } else if (reqContentType.startsWith("video/")) {
+      const ab = await c.req.arrayBuffer();
+      fileBuffer = Buffer.from(ab);
+      contentType = reqContentType;
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return c.json({ success: false, error: "No se recibió ningún video válido." }, 400);
+    }
+
+    // Storage optimization: Max video size 35 MB
+    const MAX_VIDEO_SIZE = 35 * 1024 * 1024;
+    if (fileBuffer.length > MAX_VIDEO_SIZE) {
+      return c.json({
+        success: false,
+        error: "El video supera el límite máximo permitido (35 MB). Por favor, recortalo o comprimilo para optimizar el almacenamiento.",
+      }, 400);
+    }
+
+    if (contentType.includes("webm")) fileExt = "webm";
+    else if (contentType.includes("quicktime") || contentType.includes("mov")) fileExt = "mov";
+    else if (contentType.includes("x-matroska") || contentType.includes("mkv")) fileExt = "mkv";
+    else fileExt = "mp4";
+
+    const objectKey = `post-video-${auth.userId}-${Date.now()}.${fileExt}`;
     const s3 = getS3();
-    const res = await s3.send(
-      new GetObjectCommand({
+
+    await s3.send(
+      new PutObjectCommand({
         Bucket: "posts",
-        Key: key,
+        Key: objectKey,
+        Body: fileBuffer,
+        ContentType: contentType,
       })
     );
 
-    let contentType = res.ContentType || "image/jpeg";
-    if (key.endsWith(".png")) contentType = "image/png";
-    else if (key.endsWith(".webp")) contentType = "image/webp";
-    else if (key.endsWith(".gif")) contentType = "image/gif";
+    const storageEndpoint = process.env.AWS_ENDPOINT_URL_S3 || "https://br-spring-base-betng0ba.storage.c-9.us-east-2.aws.neon.tech";
+    const videoUrl = `${storageEndpoint}/posts/${objectKey}`;
 
-    const stream = res.Body as any;
-    return new Response(stream, {
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
+    return c.json({
+      success: true,
+      videoUrl,
     });
   } catch (err: any) {
-    return c.text("Imagen no encontrada", 404);
+    console.error("Post video upload error:", err);
+    return c.json({ success: false, error: err.message || "Error al subir video" }, 500);
   }
+});
+
+// Serve post media directly from high-speed Neon Object Storage via fast 302 redirect
+app.get("/api/posts/media/:key", async (c) => {
+  const key = c.req.param("key");
+  const storageEndpoint = process.env.AWS_ENDPOINT_URL_S3 || "https://br-spring-base-betng0ba.storage.c-9.us-east-2.aws.neon.tech";
+  return c.redirect(`${storageEndpoint}/posts/${key}`, 302);
 });
 
 // Create a publication (text, markdown, image or text with image)
@@ -1281,8 +1305,12 @@ app.post("/api/posts", async (c) => {
       .map((u) => u.trim());
     const primaryImageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
 
-    if (!content && imageUrls.length === 0) {
-      return c.json({ success: false, error: "La publicación debe tener texto o una imagen." }, 400);
+    const videoUrl = typeof body.videoUrl === "string" && body.videoUrl.trim().length > 0
+      ? body.videoUrl.trim()
+      : (typeof body.video_url === "string" && body.video_url.trim().length > 0 ? body.video_url.trim() : null);
+
+    if (!content && imageUrls.length === 0 && !videoUrl) {
+      return c.json({ success: false, error: "La publicación debe tener texto, imagen o video." }, 400);
     }
 
     // Heuristic content moderation check
@@ -1294,10 +1322,10 @@ app.post("/api/posts", async (c) => {
     const isSensitive = Boolean(body.isSensitive);
 
     const insertRes = await p.query(
-      `INSERT INTO public.posts (author_id, content, image_url, visibility, is_sensitive, created_at, updated_at)
-       VALUES ($1, $2, $3, 'public', $4, now(), now())
-       RETURNING id, author_id, content, image_url, is_sensitive, is_hidden, reports_count, likes_count, comments_count, created_at`,
-      [auth.userId, content || null, primaryImageUrl, isSensitive]
+      `INSERT INTO public.posts (author_id, content, image_url, video_url, visibility, is_sensitive, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'public', $5, now(), now())
+       RETURNING id, author_id, content, image_url, video_url, is_sensitive, is_hidden, reports_count, likes_count, comments_count, created_at`,
+      [auth.userId, content || null, primaryImageUrl, videoUrl, isSensitive]
     );
 
     const postRow = insertRes.rows[0];
@@ -1308,6 +1336,15 @@ app.post("/api/posts", async (c) => {
         `INSERT INTO public.post_media (post_id, media_type, media_url, order_index, created_at)
          VALUES ($1, 'image', $2, $3, now())`,
         [postRow.id, imageUrls[i], i]
+      );
+    }
+
+    // Populate post_media if video is attached
+    if (videoUrl) {
+      await p.query(
+        `INSERT INTO public.post_media (post_id, media_type, media_url, order_index, created_at)
+         VALUES ($1, 'video', $2, 0, now())`,
+        [postRow.id, videoUrl]
       );
     }
 
@@ -1330,6 +1367,7 @@ app.post("/api/posts", async (c) => {
         content: postRow.content || "",
         imageUrl: postRow.image_url,
         imageUrls: imageUrls.length > 0 ? imageUrls : (postRow.image_url ? [postRow.image_url] : []),
+        videoUrl: postRow.video_url || videoUrl,
         isSensitive: Boolean(postRow.is_sensitive),
         isHidden: Boolean(postRow.is_hidden),
         reportsCount: Number(postRow.reports_count || 0),
@@ -1378,6 +1416,7 @@ function mapPostRow(row: any) {
     content: row.content || "",
     imageUrl: primaryImageUrl,
     imageUrls: imageUrls,
+    videoUrl: row.video_url || null,
     isSensitive: Boolean(row.is_sensitive),
     isHidden: Boolean(row.is_hidden),
     reportsCount: Number(row.reports_count || 0),
@@ -1409,6 +1448,7 @@ app.get("/api/posts/feed", async (c) => {
           p.id,
           p.author_id,
           p.content,
+          p.video_url,
           COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
           COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
           p.is_sensitive,
@@ -1451,6 +1491,7 @@ app.get("/api/posts/feed", async (c) => {
         p.id,
         p.author_id,
         p.content,
+        p.video_url,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
         COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
         p.is_sensitive,
@@ -1515,6 +1556,7 @@ app.get("/api/posts/following", async (c) => {
         p.id,
         p.author_id,
         p.content,
+        p.video_url,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
         COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
         p.is_sensitive,
@@ -1620,6 +1662,7 @@ app.get("/api/posts/user/:target", async (c) => {
         p.id,
         p.author_id,
         p.content,
+        p.video_url,
         COALESCE(p.image_url, (SELECT media_url FROM public.post_media pm WHERE pm.post_id = p.id ORDER BY order_index ASC LIMIT 1)) as image_url,
         COALESCE((SELECT array_agg(pm.media_url ORDER BY pm.order_index ASC) FROM public.post_media pm WHERE pm.post_id = p.id), ARRAY[]::text[]) as media_urls,
         p.is_sensitive,
@@ -3411,6 +3454,46 @@ app.post("/api/admin/reports/:id/action", async (c) => {
   } catch (err: any) {
     console.error("Report action error:", err);
     return c.json({ success: false, error: err.message || "Error al procesar acción sobre reporte" }, 500);
+  }
+});
+
+// Proxy GIPHY requests safely on server side without exposing API keys to client
+app.get("/api/gifs/trending", async (c) => {
+  try {
+    const limit = c.req.query("limit") || "30";
+    const offset = c.req.query("offset") || "0";
+    const apiKey = process.env.GIPHY_API_KEY || "";
+    if (!apiKey) {
+      return c.json({ data: [] });
+    }
+    const res = await fetch(
+      `https://api.giphy.com/v1/gifs/trending?api_key=${apiKey}&limit=${limit}&offset=${offset}&rating=g`
+    );
+    const data = await res.json();
+    return c.json(data);
+  } catch (err: any) {
+    console.error("Giphy trending error:", err);
+    return c.json({ data: [] }, 500);
+  }
+});
+
+app.get("/api/gifs/search", async (c) => {
+  try {
+    const q = c.req.query("q") || "";
+    const limit = c.req.query("limit") || "30";
+    const offset = c.req.query("offset") || "0";
+    const apiKey = process.env.GIPHY_API_KEY || "";
+    if (!apiKey) {
+      return c.json({ data: [] });
+    }
+    const res = await fetch(
+      `https://api.giphy.com/v1/gifs/search?api_key=${apiKey}&q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}&rating=g&lang=es`
+    );
+    const data = await res.json();
+    return c.json(data);
+  } catch (err: any) {
+    console.error("Giphy search error:", err);
+    return c.json({ data: [] }, 500);
   }
 });
 

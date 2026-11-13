@@ -1,4 +1,7 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 import 'models/user_profile.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_navigation_screen.dart';
@@ -10,6 +13,13 @@ import 'widgets/brote_logo.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb || !Platform.environment.containsKey('FLUTTER_TEST')) {
+    try {
+      MediaKit.ensureInitialized();
+    } catch (e) {
+      debugPrint('MediaKit initialization note: $e');
+    }
+  }
   // Restore the saved light/dark choice before the first frame to avoid a flash
   await ThemeService().load();
   await MessageNotificationService().init();

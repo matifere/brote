@@ -7,6 +7,8 @@ import '../models/rating.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/catalog_service.dart';
+import '../services/media_optimizer.dart';
+import '../widgets/post_video_player.dart';
 import '../widgets/review_picker.dart';
 
 class CreatePostScreen extends StatefulWidget {
@@ -30,14 +32,32 @@ class _SelectedPostImage {
   const _SelectedPostImage({required this.bytes, required this.name});
 }
 
+class _SelectedPostVideo {
+  final Uint8List bytes;
+  final String name;
+  final String? path;
+  final Uint8List? thumbnailBytes;
+  final String? optimizationSummary;
+
+  const _SelectedPostVideo({
+    required this.bytes,
+    required this.name,
+    this.path,
+    this.thumbnailBytes,
+    this.optimizationSummary,
+  });
+}
+
 class _CreatePostScreenState extends State<CreatePostScreen> {
   final TextEditingController _textController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
 
   static const int _maxImages = 10;
   final List<_SelectedPostImage> _selectedImages = [];
+  _SelectedPostVideo? _selectedVideo;
 
   bool _isPublishing = false;
+  bool _isOptimizingVideo = false;
   bool _showPreview = false;
   bool _isEphemeral = false;
   bool _isSensitive = false;
@@ -75,9 +95,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   Future<void> _pickImagesFromGallery() async {
     try {
       final pickedList = await _picker.pickMultiImage(
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 85,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 78,
       );
       if (pickedList.isNotEmpty) {
         final remaining = _maxImages - _selectedImages.length;
@@ -95,6 +115,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           toAdd.add(_SelectedPostImage(bytes: bytes, name: picked.name));
         }
         setState(() {
+          _selectedVideo = null; // Either photos or video
           _selectedImages.addAll(toAdd);
         });
       }
@@ -119,13 +140,14 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       }
       final picked = await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 85,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 78,
       );
       if (picked != null) {
         final bytes = await picked.readAsBytes();
         setState(() {
+          _selectedVideo = null; // Either photos or video
           _selectedImages.add(_SelectedPostImage(bytes: bytes, name: picked.name));
         });
       }
@@ -135,6 +157,80 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           SnackBar(content: Text('No se pudo tomar la foto: $e')),
         );
       }
+    }
+  }
+
+  Future<void> _pickVideoFromGallery() async {
+    try {
+      final picked = await _picker.pickVideo(
+        source: ImageSource.gallery,
+        maxDuration: const Duration(seconds: 60),
+      );
+      if (picked == null) return;
+      await _processSelectedVideo(picked);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo seleccionar el video: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _pickVideoFromCamera() async {
+    try {
+      final picked = await _picker.pickVideo(
+        source: ImageSource.camera,
+        maxDuration: const Duration(seconds: 60),
+      );
+      if (picked == null) return;
+      await _processSelectedVideo(picked);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo grabar el video: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _processSelectedVideo(XFile picked) async {
+    setState(() => _isOptimizingVideo = true);
+    try {
+      final opt = await MediaOptimizer.optimizeVideo(
+        localFilePath: picked.path,
+        filename: picked.name,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _isOptimizingVideo = false;
+        _selectedImages.clear(); // Post has either video or photos
+        _selectedVideo = _SelectedPostVideo(
+          bytes: opt.bytes,
+          name: opt.filename,
+          path: opt.localFilePath ?? picked.path,
+          thumbnailBytes: opt.thumbnailBytes,
+          optimizationSummary: opt.savingsPercentage > 5 ? opt.summary : null,
+        );
+      });
+
+      if (opt.savingsPercentage > 5 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '¡Video optimizado! Tamaño reducido a ${(opt.optimizedSize / (1024 * 1024)).toStringAsFixed(1)} MB (${opt.savingsPercentage.toStringAsFixed(0)}% menos espacio)',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isOptimizingVideo = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e')),
+      );
     }
   }
 
@@ -188,6 +284,57 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
+  void _showVideoSourcePicker() {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.video_library_rounded),
+                  title: const Text('Elegir video de la galería'),
+                  subtitle: const Text('Hasta 60 segundos, optimizado para ahorrar espacio'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickVideoFromGallery();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.videocam_rounded),
+                  title: const Text('Grabar video con la cámara'),
+                  subtitle: const Text('Graba un video de hasta 60 segundos'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickVideoFromCamera();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _removeImageAt(int index) {
     if (index >= 0 && index < _selectedImages.length) {
       setState(() => _selectedImages.removeAt(index));
@@ -196,6 +343,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   void _clearSelectedImages() {
     setState(() => _selectedImages.clear());
+  }
+
+  void _clearSelectedVideo() {
+    setState(() => _selectedVideo = null);
   }
 
   Future<void> _handlePublish() async {
@@ -207,9 +358,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       );
       return;
     }
-    if (text.isEmpty && _selectedImages.isEmpty && reviewItem == null) {
+    if (text.isEmpty && _selectedImages.isEmpty && _selectedVideo == null && reviewItem == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Escribí algo o seleccioná una imagen para publicar.')),
+        const SnackBar(content: Text('Escribí algo o seleccioná una foto o video para publicar.')),
       );
       return;
     }
@@ -217,7 +368,28 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     setState(() => _isPublishing = true);
 
     try {
+      String? uploadedVideoUrl;
       final uploadedImageUrls = <String>[];
+
+      // Upload video to Neon Object Storage if selected
+      if (_selectedVideo != null) {
+        uploadedVideoUrl = await AuthService().uploadPostVideo(
+          _selectedVideo!.bytes,
+          filename: _selectedVideo!.name,
+        );
+        if (uploadedVideoUrl == null) {
+          if (!mounted) return;
+          setState(() => _isPublishing = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                AuthService().lastCreatePostError ?? 'Error al subir el video. Intentá de nuevo.',
+              ),
+            ),
+          );
+          return;
+        }
+      }
 
       // Upload each selected image to Neon Object Storage
       for (var i = 0; i < _selectedImages.length; i++) {
@@ -250,6 +422,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         content: content.isNotEmpty ? content : null,
         imageUrl: uploadedImageUrls.isNotEmpty ? uploadedImageUrls.first : null,
         imageUrls: uploadedImageUrls.isNotEmpty ? uploadedImageUrls : null,
+        videoUrl: uploadedVideoUrl,
         isSensitive: _isSensitive,
       );
 
@@ -271,6 +444,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         _textController.clear();
         setState(() {
           _selectedImages.clear();
+          _selectedVideo = null;
           _showPreview = false;
           _isEphemeral = false;
           _isSensitive = false;
@@ -533,6 +707,141 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 ),
               ),
 
+            // Interactive Video Preview if selected (playable video or thumbnail + controls)
+            if (_selectedVideo != null) ...[
+              const SizedBox(height: 16),
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(maxHeight: 380),
+                      color: Colors.black,
+                      child: (_selectedVideo!.path != null && _selectedVideo!.path!.isNotEmpty)
+                          ? PostVideoPlayer(
+                              videoUrl: _selectedVideo!.path!,
+                              autoPlay: true,
+                            )
+                          : (_selectedVideo!.thumbnailBytes != null
+                              ? Image.memory(
+                                  _selectedVideo!.thumbnailBytes!,
+                                  fit: BoxFit.cover,
+                                )
+                              : const Center(
+                                  child: Icon(Icons.videocam_rounded, size: 48, color: Colors.white),
+                                )),
+                    ),
+                  ),
+
+                  // Floating close button at top right
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: GestureDetector(
+                      onTap: _clearSelectedVideo,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.75),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close_rounded,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Video info badge at bottom left
+                  Positioned(
+                    bottom: 10,
+                    left: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.75),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.videocam_rounded, size: 14, color: Colors.white),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${(_selectedVideo!.bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          if (_selectedVideo!.optimizationSummary != null) ...[
+                            const SizedBox(width: 6),
+                            const Text(
+                              '• ⚡ Optimizado',
+                              style: TextStyle(
+                                color: Colors.lightGreenAccent,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _selectedVideo!.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: colorScheme.primary,
+                    ),
+                    icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+                    label: const Text('Cambiar video'),
+                    onPressed: _showVideoSourcePicker,
+                  ),
+                ],
+              ),
+            ],
+
+            // Video optimizing indicator
+            if (_isOptimizingVideo) ...[
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Optimizando video para ahorrar espacio y acelerar la carga...',
+                    style: TextStyle(color: colorScheme.primary, fontSize: 12, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ],
+
             // Image Preview if selected (single or multiple)
             if (_selectedImages.isNotEmpty) ...[
               const SizedBox(height: 16),
@@ -714,7 +1023,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             Divider(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
             const SizedBox(height: 12),
 
-            // Attachments: photo and movie/music review
+            // Attachments: photo, video and movie/music review
             Wrap(
               spacing: 12,
               runSpacing: 8,
@@ -726,6 +1035,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                       ? 'Agregar foto'
                       : 'Agregar más fotos (${_selectedImages.length}/$_maxImages)'),
                   onPressed: _selectedImages.length >= _maxImages ? null : _showImageSourcePicker,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.videocam_rounded, size: 20),
+                  label: Text(_selectedVideo == null ? 'Video' : 'Cambiar video'),
+                  onPressed: _showVideoSourcePicker,
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -745,6 +1063,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                     icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.redAccent),
                     label: const Text('Quitar foto', style: TextStyle(color: Colors.redAccent)),
                     onPressed: _clearSelectedImages,
+                  ),
+                if (_selectedVideo != null)
+                  TextButton.icon(
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.redAccent),
+                    label: const Text('Quitar video', style: TextStyle(color: Colors.redAccent)),
+                    onPressed: _clearSelectedVideo,
                   ),
               ],
             ),

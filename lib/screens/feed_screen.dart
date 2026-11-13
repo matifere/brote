@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/post_item.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/video_cache_service.dart';
 import '../widgets/brote_logo.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/post_card.dart';
@@ -80,6 +81,12 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
         _forYouPosts = posts;
         _isLoadingForYou = false;
       });
+      // Aggressively preload top feed videos into local cache for instant playback
+      for (final p in posts.take(6)) {
+        if (p.videoUrl != null && p.videoUrl!.isNotEmpty) {
+          VideoCacheService.instance.preload(p.videoUrl!);
+        }
+      }
     }
   }
 
@@ -90,6 +97,12 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
         _followingPosts = posts;
         _isLoadingFollowing = false;
       });
+      // Aggressively preload top following videos into local cache
+      for (final p in posts.take(6)) {
+        if (p.videoUrl != null && p.videoUrl!.isNotEmpty) {
+          VideoCacheService.instance.preload(p.videoUrl!);
+        }
+      }
     }
   }
 
@@ -251,7 +264,10 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
         ),
         itemBuilder: (context, index) {
           final post = _forYouPosts[index];
-          return PostCard(post: post);
+          return PostCard(
+            post: post,
+            contextPosts: _forYouPosts,
+          );
         },
       ),
     );
@@ -287,7 +303,10 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
         ),
         itemBuilder: (context, index) {
           final post = _followingPosts[index];
-          return PostCard(post: post);
+          return PostCard(
+            post: post,
+            contextPosts: _followingPosts,
+          );
         },
       ),
     );
@@ -340,7 +359,10 @@ class _FeedScreenState extends State<FeedScreen> with SingleTickerProviderStateM
           height: 1,
           color: colorScheme.outlineVariant.withValues(alpha: 0.35),
         ),
-        itemBuilder: (context, index) => PostCard(post: reviews[index]),
+        itemBuilder: (context, index) => PostCard(
+          post: reviews[index],
+          contextPosts: reviews,
+        ),
       ),
     );
   }
