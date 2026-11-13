@@ -46,5 +46,16 @@ app.*.map.json
 .neon
 node_modules/
 dist/
-.env.local
 .env
+.env.*
+*.env
+*.pem
+*.key
+*.keystore
+*.jks
+*.p12
+*.p8
+*.mobileprovision
+*.cer
+google-services.json
+GoogleService-Info.plist
