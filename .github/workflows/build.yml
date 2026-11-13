@@ -233,13 +233,13 @@ jobs:
         run: flutter pub get
 
       - name: Build macOS Desktop
-        run: flutter build macos --release --no-codesign
+        run: flutter build macos --release
 
       - name: Prepare macOS archive
         run: |
           mkdir -p dist
           cd build/macos/Build/Products/Release
-          zip -r -y ../../../../../dist/brote-macos.zip brote.app
+          zip -r -y ../../../../../dist/brote-macos.zip *.app
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
